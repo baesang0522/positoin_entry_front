@@ -4,14 +4,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Position Now · 샘플 화면</title>
+    <title>Position Now</title>
     <link rel="stylesheet" href="style.css">
     <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/split.js@1.6.5/dist/split.min.js"></script>
 </head>
 
 <body>
-    <div class="demo-notice" role="status">샘플 화면 · 모든 수치는 가상 데이터야. 실제 계좌와 연결되지 않았어.</div>
+    <div class="demo-notice" role="status">EC2 조회 화면 · 30초마다 갱신 · 포지션·예측은 서버에 마지막 저장된 값이야.</div>
     <div class="dashboard">
         <!-- Header Controls -->
         <header>
@@ -38,7 +38,7 @@
                 </div>
             </div>
             <div class="status">
-                <span id="connection-status">Disconnected</span>
+                <span id="connection-status">차트 조회 대기</span>
                 <span id="last-price">---</span>
             </div>
         </header>
@@ -69,9 +69,10 @@
                         <div class="panel-content">
                             <!-- Tab 1: Active Position -->
                             <div id="position-tab" class="tab-content active">
+                                <div id="position-status" role="status" style="padding: 8px; font-size: 12px;">포지션 조회 대기</div>
                                 <div class="position-dashboard" id="position-dashboard">
                                     <div class="no-position-message" id="no-position-msg">
-                                        <span>No Active Position</span>
+                                        <span>포지션 조회 중</span>
                                     </div>
                                     <div class="position-details" id="position-details" style="display: none;">
                                         <div class="pos-header">
@@ -102,7 +103,7 @@
                                                 <span class="value" id="pos-mark">0.00</span>
                                             </div>
                                             <div class="grid-item">
-                                                <span class="label">Time</span>
+                                                <span class="label">거래소 시각</span>
                                                 <span class="value" id="pos-time">--:--:--</span>
                                             </div>
                                         </div>
@@ -118,6 +119,7 @@
                                         style="background: none; border: 1px solid var(--border-color); color: var(--text-color); padding: 4px 8px; cursor: pointer; border-radius: 4px;">↻
                                         Refresh</button>
                                 </div>
+                                <div id="history-status" role="status" style="padding: 8px; font-size: 12px;">거래내역 조회 대기</div>
                                 <div class="trade-history-container">
                                     <table class="trade-table">
                                         <thead>
@@ -144,6 +146,7 @@
                             <button aria-label="패널 확대 또는 닫기" class="btn-fullscreen" data-panel="predictions-panel">⛶</button>
                         </div>
                         <div class="panel-content">
+                            <div id="prediction-status" role="status" style="padding: 8px; font-size: 12px;">예측 조회 대기</div>
                             <div class="scheduled-prediction" id="scheduled-prediction">
                                 <div class="pred-header-row">
                                     <div class="pred-time-box">
@@ -170,17 +173,17 @@
                                         <div class="prob-bar-container">
                                             <div class="prob-bar long" id="prob-bar-long" style="width: 0%"></div>
                                         </div>
-                                        <span class="prob-val" id="prob-val-long">0.0%</span>
+                                        <span class="prob-val" id="prob-val-long">—</span>
                                     </div>
                                     <div class="prob-row">
                                         <span class="prob-label">Short Prob</span>
                                         <div class="prob-bar-container">
                                             <div class="prob-bar short" id="prob-bar-short" style="width: 0%"></div>
                                         </div>
-                                        <span class="prob-val" id="prob-val-short">0.0%</span>
+                                        <span class="prob-val" id="prob-val-short">—</span>
                                     </div>
                                     <div class="prob-threshold-info">
-                                        <span id="prob-threshold-text">실거래 기준 미연결</span>
+                                        <span id="prob-threshold-text">모델 기준 정보 없음</span>
                                     </div>
                                 </div>
 
@@ -222,7 +225,7 @@
                 <span class="panel-title">Signal Analysis</span>
             </div>
             <div class="panel-content">
-                <div id="signal-text">Waiting for data...</div>
+                <div id="signal-text">모델의 최근 판단은 ML Predictions에서 확인해줘.</div>
             </div>
         </div>
     </div>

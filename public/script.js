@@ -1,73 +1,35 @@
-// Standalone preview: synthetic values only; no backend or exchange requests.
-const DEMO_TIME = Date.parse('2026-10-09T00:00:00Z') / 1000;
-
-function createDemoChart(symbol, interval, periods) {
-    const base = { BTCUSDT: 61000, ETHUSDT: 2400, SOLUSDT: 140, XRPUSDT: 0.55 }[symbol];
-    const step = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 }[interval];
-    if (!base || !step || periods.length !== 3 || periods.some(p => !Number.isInteger(p) || p < 1 || p > 500)) {
-        throw new Error('종목·간격과 이동평균 기간(1~500 정수)을 확인해줘.');
-    }
-    const price = i => base * (1 + (i - 499) / 50000 + 0.018 * (Math.sin(i / 13) - Math.sin(499 / 13)));
-    const candles = Array.from({ length: 500 }, (_, i) => {
-        const open = price(i - 1), close = price(i);
-        return { time: DEMO_TIME - (499 - i) * step, open, close,
-            high: Math.max(open, close) + base * 0.002,
-            low: Math.min(open, close) - base * 0.002 };
+// Same-origin requests pass through Cloudflare Access and the Worker to EC2.
+async function loadApiData(path) {
+    const response = await fetch(path, {
+        credentials: 'same-origin', cache: 'no-store', redirect: 'error',
+        headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(20000)
     });
-    const result = { candles, markers: [], lastSignal: null };
-    periods.forEach((period, index) => {
-        let sum = 0;
-        const data = [];
-        candles.forEach((candle, i) => {
-            sum += candle.close;
-            if (i >= period) sum -= candles[i - period].close;
-            if (i >= period - 1) data.push({ time: candle.time, value: sum / period });
-        });
-        result[`ma${index + 1}`] = { period, data };
-    });
-    return result;
+    if (response.status === 401 || response.status === 403) throw new Error('로그인이 필요해. 새로고침해줘.');
+    if (!response.ok) throw new Error(`조회 실패 (HTTP ${response.status})`);
+    if (!response.headers.get('content-type')?.includes('application/json')) throw new Error('로그인 또는 서버 응답을 확인해줘.');
+    return response.json();
 }
 
-async function loadDemoData(path) {
-    const url = new URL(path, 'https://demo.invalid');
-    if (url.pathname === '/api/data') {
-        const q = url.searchParams;
-        return createDemoChart(q.get('symbol'), q.get('interval'), ['ma1', 'ma2', 'ma3'].map(key => Number(q.get(key))));
-    }
-    if (url.pathname === '/api/position') return { status: 'active', data: {
-        symbol: 'BTC/USDT', side: 'LONG', size: 0.002, entry_price: 60000,
-        mark_price: 61000, unrealized_pnl: 2, roi: 100 / 60,
-        timestamp: String((DEMO_TIME - 3600) * 1000)
-    } };
-    if (url.pathname === '/api/latest_prediction') return { status: 'success', data: {
-        time_str: '2026-10-09 09:00 KST · 샘플', prediction: 'WAITING', confidence: 0.62,
-        latency_ms: 120, probabilities: { long: 0.62, short: 0.38 },
-        features: { rsi_14: 54.2, slope_ma25: 0.0123, bear_power: -12.4, adx: 21.7 }
-    } };
-    if (url.pathname === '/api/trades') return { status: 'success', data: [
-        { timestamp: (DEMO_TIME - 7200) * 1000, side: 'SELL', price: 60500, amount: 0.002, realizedPnl: 1 },
-        { timestamp: (DEMO_TIME - 10800) * 1000, side: 'BUY', price: 60000, amount: 0.002, realizedPnl: 0 }
-    ] };
-    throw new Error('지원하지 않는 샘플 요청');
+function numberOrNull(value) {
+    if (!['number', 'string'].includes(typeof value) || String(value).trim() === '') return null;
+    return Number.isFinite(Number(value)) ? Number(value) : null;
 }
 
-// Runnable check: open index.html?selftest and inspect the console.
-function checkDemoData() {
-    const check = (ok, message) => { if (!ok) throw new Error(message); };
-    for (const interval of ['1m', '5m', '15m', '1h', '4h', '1d']) {
-        const data = createDemoChart('BTCUSDT', interval, [1, 25, 500]);
-        check(data.candles.length === 500 && data.ma3.data.length === 1, 'Demo lengths');
-        check(data.candles.every((c, i, a) => c.low <= Math.min(c.open, c.close) && c.high >= Math.max(c.open, c.close) && (!i || c.time > a[i - 1].time)), 'Demo candles');
-        check(Math.abs(data.ma3.data[0].value - data.candles.reduce((s, c) => s + c.close, 0) / 500) < 1e-8, 'Demo moving average');
-    }
-    for (const invalid of [0, 501, 1.5, NaN]) {
-        let rejected = false;
-        try { createDemoChart('BTCUSDT', '1h', [invalid, 25, 99]); } catch { rejected = true; }
-        check(rejected, 'Invalid MA period accepted');
-    }
-    console.info('Demo data checks passed');
+function formatNumber(value, digits = 2) {
+    const number = numberOrNull(value);
+    return number === null ? '—' : number.toFixed(digits);
 }
-if (new URLSearchParams(location.search).has('selftest')) checkDemoData();
+
+function showStatus(id, message, failed = false) {
+    const el = document.getElementById(id);
+    el.textContent = message;
+    el.style.color = failed ? '#ef5350' : '';
+}
+
+function snapshotStatus(data) {
+    const saved = data.last_updated ? `서버 저장: ${data.last_updated.replace('T', ' ')}` : '서버 저장 시각 없음';
+    return `${saved} · 조회: ${new Date().toLocaleTimeString()}`;
+}
 
 // DOM Elements
 const chartContainer = document.getElementById('chart-container');
@@ -235,11 +197,6 @@ function initChart() {
     ma2Series = chart.addLineSeries({ color: '#9c27b0', lineWidth: 1, title: `MA${currentMa2}` });
     ma3Series = chart.addLineSeries({ color: '#2196f3', lineWidth: 1, title: `MA${currentMa3}` });
 
-    console.log('Calling fetchData...');
-    fetchData();
-    fetchScheduledPrediction();
-    fetchPosition();
-    // Fixed demo snapshot; refresh only when a control changes.
     new ResizeObserver(() => {
         chart.applyOptions({ width: chartContainer.clientWidth, height: chartContainer.clientHeight });
     }).observe(chartContainer);
@@ -248,48 +205,26 @@ function initChart() {
 
 // Position Dashboard
 let currentPriceLine = null;
-let positionMarker = null; // Store current position marker
 
-function updateScheduledPredictionUI(data) {
-    // Time & Latency
-    document.getElementById('sched-time').textContent = data.time_str;
-    if (data.latency_ms) {
-        document.getElementById('sched-latency').textContent = (data.latency_ms / 1000).toFixed(2) + '초';
-    }
-
-    // Main Result
+function updateScheduledPredictionUI(data = {}) {
+    const timestamp = numberOrNull(data.timestamp);
+    document.getElementById('sched-time').textContent = timestamp === null ? (data.time_str || '—') : new Date(timestamp * 1000).toLocaleString();
+    document.getElementById('sched-latency').textContent = numberOrNull(data.latency_ms) === null ? '—' : formatNumber(data.latency_ms / 1000) + '초';
     const resultEl = document.getElementById('sched-result');
-    resultEl.textContent = data.prediction;
+    resultEl.textContent = data.prediction || '—';
     resultEl.className = 'result-value ' + (data.prediction === 'LONG' ? 'positive' : (data.prediction === 'SHORT' ? 'negative' : ''));
-
-    document.getElementById('sched-conf').textContent = (data.confidence * 100).toFixed(1) + '%';
-
-    // Probabilities
-    if (data.probabilities) {
-        const longP = (data.probabilities.long * 100).toFixed(1);
-        const shortP = (data.probabilities.short * 100).toFixed(1);
-
-        document.getElementById('prob-bar-long').style.width = longP + '%';
-        document.getElementById('prob-val-long').textContent = longP + '%';
-
-        document.getElementById('prob-bar-short').style.width = shortP + '%';
-        document.getElementById('prob-val-short').textContent = shortP + '%';
-
-        // Update Threshold Text
-        if (data.thresholds) {
-            const longTh = (data.thresholds.long * 100).toFixed(0);
-            const shortTh = (data.thresholds.short * 100).toFixed(0);
-            document.getElementById('prob-threshold-text').textContent =
-                `Limit: Long > ${longTh}%, Short > ${shortTh}%`;
-        }
+    document.getElementById('sched-conf').textContent = numberOrNull(data.confidence) === null ? '—' : formatNumber(data.confidence * 100, 1) + '%';
+    for (const side of ['long', 'short']) {
+        const probability = numberOrNull(data.probabilities?.[side]);
+        const valid = probability !== null && probability >= 0 && probability <= 1;
+        document.getElementById(`prob-bar-${side}`).style.width = valid ? `${probability * 100}%` : '0%';
+        document.getElementById(`prob-val-${side}`).textContent = valid ? formatNumber(probability * 100, 1) + '%' : '—';
     }
-
-    // Features
-    if (data.features) {
-        document.getElementById('feat-rsi').textContent = data.features.rsi_14.toFixed(1);
-        document.getElementById('feat-slope').textContent = data.features.slope_ma25.toFixed(4);
-        document.getElementById('feat-bear').textContent = data.features.bear_power.toFixed(4);
-        document.getElementById('feat-adx').textContent = data.features.adx.toFixed(1);
+    const longTh = numberOrNull(data.thresholds?.long), shortTh = numberOrNull(data.thresholds?.short);
+    document.getElementById('prob-threshold-text').textContent = longTh === null || shortTh === null ? '모델 기준 정보 없음' :
+        `모델 기준: Long ${formatNumber(longTh * 100, 1)}% · Short ${formatNumber(shortTh * 100, 1)}%`;
+    for (const [id, key, digits] of [['feat-rsi', 'rsi_14', 1], ['feat-slope', 'slope_ma25', 4], ['feat-bear', 'bear_power', 4], ['feat-adx', 'adx', 1]]) {
+        document.getElementById(id).textContent = formatNumber(data.features?.[key], digits);
     }
 }
 
@@ -299,6 +234,7 @@ function updatePositionDashboard(data) {
 
     // Clear price line if no position or error
     if (!data || data.status !== 'active') {
+        noPosMsg.textContent = data?.status === 'no_position' ? '보유 포지션 없음' : data?.status === 'no_data' ? '저장된 포지션 정보 없음' : '포지션 조회 실패';
         noPosMsg.style.display = 'flex';
         posDetails.style.display = 'none';
 
@@ -306,13 +242,11 @@ function updatePositionDashboard(data) {
             candlestickSeries.removePriceLine(currentPriceLine);
             currentPriceLine = null;
         }
-        positionMarker = null; // Clear marker
         if (candlestickSeries) candlestickSeries.setMarkers([]);
         return;
     }
 
     const pos = data.data;
-    console.log('Position Data:', pos); // Debug log
 
     noPosMsg.style.display = 'none';
     posDetails.style.display = 'block';
@@ -331,23 +265,19 @@ function updatePositionDashboard(data) {
 
     document.getElementById('pos-entry').textContent = parseFloat(pos.entry_price).toLocaleString(undefined, { minimumFractionDigits: 2 });
     document.getElementById('pos-mark').textContent = parseFloat(pos.mark_price).toLocaleString(undefined, { minimumFractionDigits: 2 });
-    document.getElementById('pos-size').textContent = parseFloat(pos.size).toFixed(3);
+    document.getElementById('pos-size').textContent = Number(pos.size).toLocaleString(undefined, { maximumFractionDigits: 8 });
 
     const pnlEl = document.getElementById('pos-pnl');
     const pnlVal = parseFloat(pos.unrealized_pnl);
     pnlEl.textContent = `${pnlVal >= 0 ? '+' : ''}${pnlVal.toFixed(2)}`;
     pnlEl.className = `value ${pnlVal >= 0 ? 'positive' : 'negative'}`;
 
-    if (pos.timestamp) {
-        const date = new Date(parseInt(pos.timestamp));
-        document.getElementById('pos-time').textContent = date.toLocaleTimeString();
-    }
+    document.getElementById('pos-time').textContent = numberOrNull(pos.timestamp) === null ? '—' : new Date(Number(pos.timestamp)).toLocaleString();
 
     // Update Chart Price Line
-    if (candlestickSeries && currentSymbol !== 'BTCUSDT') {
+    if (candlestickSeries && currentSymbol !== pos.symbol.split(':')[0].replace('/', '')) {
         if (currentPriceLine) candlestickSeries.removePriceLine(currentPriceLine);
         currentPriceLine = null;
-        positionMarker = null;
         candlestickSeries.setMarkers([]);
         return;
     }
@@ -371,42 +301,39 @@ function updatePositionDashboard(data) {
             title: `${pos.side} ENTRY`,
         });
 
-        // Create Marker
-        if (pos.timestamp) {
-            const entryTime = parseInt(pos.timestamp) / 1000;
-            positionMarker = {
-                time: entryTime,
-                position: isLong ? 'belowBar' : 'aboveBar',
-                color: color,
-                shape: isLong ? 'arrowUp' : 'arrowDown',
-                text: 'ENTRY',
-                size: 2
-            };
-            // Force update markers immediately
-            candlestickSeries.setMarkers([positionMarker]);
-        }
+        // Exchange position timestamp is not a confirmed entry timestamp.
+        candlestickSeries.setMarkers([]);
     }
 }
 
+let positionLoading = false;
 async function fetchPosition() {
+    if (positionLoading) return;
+    positionLoading = true;
     try {
-        const data = await loadDemoData('/api/position');
+        const data = await loadApiData('/api/position');
+        if (!['active', 'no_position', 'no_data'].includes(data.status)) throw new Error('포지션 응답 오류');
+        if (data.status === 'active' && (!data.data || typeof data.data.symbol !== 'string' ||
+            !['LONG', 'SHORT'].includes(data.data.side) ||
+            ['size', 'entry_price', 'mark_price', 'unrealized_pnl', 'roi'].some(key => numberOrNull(data.data[key]) === null))) {
+            throw new Error('포지션 응답 오류');
+        }
         updatePositionDashboard(data);
+        showStatus('position-status', snapshotStatus(data));
     } catch (error) {
-        console.error('Error fetching position:', error);
+        updatePositionDashboard(null);
+        showStatus('position-status', `${error.message} · 연결과 로그인을 확인해줘.`, true);
+    } finally {
+        positionLoading = false;
     }
 }
 
-
-// Initial Load
-console.log('Script loaded, initializing...');
-initSplits();
-mobileLayout.addEventListener('change', initSplits);
-setupFullscreenButtons();
-initChart();
-
+let chartRequest = 0;
+let displayedChart = '';
 // Fetch Data
 async function fetchData() {
+    if (!chart) return;
+    const requestId = ++chartRequest;
     // Capture current state at the start of the request
     const requestSymbol = currentSymbol;
     const requestInterval = currentInterval;
@@ -414,12 +341,20 @@ async function fetchData() {
     const requestMa2 = currentMa2;
     const requestMa3 = currentMa3;
 
-    connectionStatus.textContent = 'Fetching...';
+    const chartKey = [requestSymbol, requestInterval, requestMa1, requestMa2, requestMa3].join(':');
+    if (chartKey !== displayedChart) {
+        for (const series of [candlestickSeries, ma1Series, ma2Series, ma3Series]) series.setData([]);
+        candlestickSeries.setMarkers([]);
+        if (currentPriceLine) candlestickSeries.removePriceLine(currentPriceLine);
+        currentPriceLine = null;
+        lastPriceEl.textContent = '—';
+    }
+    connectionStatus.textContent = '차트 조회 중';
     try {
-        const data = await loadDemoData(`/api/data?symbol=${requestSymbol}&interval=${requestInterval}&ma1=${requestMa1}&ma2=${requestMa2}&ma3=${requestMa3}`);
+        const data = await loadApiData(`/api/data?symbol=${requestSymbol}&interval=${requestInterval}&ma1=${requestMa1}&ma2=${requestMa2}&ma3=${requestMa3}`);
 
         // Check if the state has changed while we were fetching
-        if (requestSymbol !== currentSymbol ||
+        if (requestId !== chartRequest || requestSymbol !== currentSymbol ||
             requestInterval !== currentInterval ||
             requestMa1 !== currentMa1 ||
             requestMa2 !== currentMa2 ||
@@ -428,6 +363,12 @@ async function fetchData() {
             return;
         }
 
+        if (!Array.isArray(data.candles) || !data.candles.length ||
+            data.candles.some((c, i, a) => ![c.time, c.open, c.high, c.low, c.close].every(Number.isFinite) || (i > 0 && c.time <= a[i - 1].time)) ||
+            ['ma1', 'ma2', 'ma3'].some(key => !Array.isArray(data[key]?.data))) {
+            throw new Error('차트 데이터가 비어 있거나 잘못됐어.');
+        }
+        displayedChart = chartKey;
         // Update Series
         candlestickSeries.setData(data.candles);
         ma1Series.setData(data.ma1.data);
@@ -439,39 +380,22 @@ async function fetchData() {
         ma2Series.applyOptions({ title: `MA${data.ma2.period}` });
         ma3Series.applyOptions({ title: `MA${data.ma3.period}` });
 
-        // Merge markers
-        let markers = data.markers || [];
-        if (positionMarker) {
-            markers.push(positionMarker);
-        }
-        // Sort markers by time (required by library)
-        markers.sort((a, b) => a.time - b.time);
-
-        candlestickSeries.setMarkers(markers);
-
         // Update UI
         const lastCandle = data.candles[data.candles.length - 1];
         lastPriceEl.textContent = lastCandle.close.toFixed(2);
-        connectionStatus.textContent = '샘플 · 실시간 아님';
+        connectionStatus.textContent = `차트 조회 ${new Date().toLocaleTimeString()}`;
         connectionStatus.style.color = '#26a69a';
 
-        const lastSignal = data.lastSignal;
-        if (lastSignal === 'buy') {
-            signalText.textContent = 'LONG SIGNAL (MA7 > MA25)';
-            signalText.className = 'signal-buy';
-        } else if (lastSignal === 'sell') {
-            signalText.textContent = 'SHORT SIGNAL (MA7 < MA25)';
-            signalText.className = 'signal-sell';
-        } else {
-            signalText.textContent = '샘플 데이터 · 매매 신호 미연결';
-            signalText.className = 'signal-neutral';
-        }
+        signalText.textContent = '모델의 최근 판단은 ML Predictions에서 확인해줘.';
+        signalText.className = 'signal-neutral';
 
     } catch (error) {
         // Only report error if it's for the current state
-        if (requestSymbol === currentSymbol && requestInterval === currentInterval) {
+        if (requestId === chartRequest) {
             console.error(error);
-            connectionStatus.textContent = `Error: ${error.message}`;
+            connectionStatus.textContent = `차트 갱신 실패 · ${error.message}`;
+            lastPriceEl.textContent = '—';
+            signalText.textContent = '차트 갱신 실패 · 남아 있는 차트는 이전 조회 결과야.';
             connectionStatus.style.color = 'red';
         }
     }
@@ -480,8 +404,8 @@ async function fetchData() {
 // Event Listeners
 symbolSelect.addEventListener('change', (e) => {
     currentSymbol = e.target.value;
-    fetchPosition();
     fetchData();
+    fetchPosition();
 });
 
 intervalSelect.addEventListener('change', (e) => {
@@ -537,74 +461,94 @@ document.getElementById('refresh-history-btn').addEventListener('click', () => {
     fetchTradeHistory();
 });
 
+let historyLoading = false;
 async function fetchTradeHistory() {
+    if (historyLoading) return;
+    historyLoading = true;
     try {
-        console.log('Fetching trade history...');
-        const result = await loadDemoData('/api/trades');
-        console.log('Trade history result:', result);
-
-        if (result.status === 'success') {
-            updateTradeHistoryUI(result.data);
-        }
+        const result = await loadApiData('/api/trades');
+        if (result.status !== 'success' || !Array.isArray(result.data)) throw new Error('거래내역 응답 오류');
+        updateTradeHistoryUI(result.data);
+        showStatus('history-status', snapshotStatus(result));
     } catch (error) {
-        console.error('Error fetching trade history:', error);
+        document.getElementById('trade-history-body').replaceChildren();
+        showStatus('history-status', `${error.message} · 연결과 로그인을 확인해줘.`, true);
+    } finally {
+        historyLoading = false;
     }
 }
 
 function updateTradeHistoryUI(trades) {
     const tbody = document.getElementById('trade-history-body');
-    if (!tbody) {
-        console.error('Tbody element not found!');
+    tbody.replaceChildren();
+    if (!trades.length) {
+        const cell = document.createElement('td');
+        cell.colSpan = 5;
+        cell.textContent = '저장된 거래내역 없음';
+        const row = document.createElement('tr');
+        row.appendChild(cell);
+        tbody.appendChild(row);
         return;
     }
-    tbody.innerHTML = '';
-
-    console.log('Rendering trades:', trades);
-
-    if (!trades || !Array.isArray(trades) || trades.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 20px;">No trades found</td></tr>';
-        return;
-    }
-
-    trades.forEach((trade, index) => {
-        try {
-            const tr = document.createElement('tr');
-
-            const date = new Date(trade.timestamp);
-            const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-
-            const isBuy = (trade.side && trade.side.toUpperCase() === 'BUY');
-            const pnl = trade.realizedPnl || 0;
-            const pnlClass = pnl > 0 ? 'positive' : (pnl < 0 ? 'negative' : '');
-            const pnlStr = pnl !== 0 ? (pnl > 0 ? '+' : '') + pnl.toFixed(2) : '-';
-
-            const priceStr = trade.price ? parseFloat(trade.price).toLocaleString(undefined, { minimumFractionDigits: 1 }) : '-';
-
-            tr.innerHTML = `
-                <td>${timeStr}</td>
-                <td class="trade-side ${isBuy ? 'buy' : 'sell'}">${trade.side || '?'}</td>
-                <td>${priceStr}</td>
-                <td>${trade.amount || 0}</td>
-                <td class="trade-pnl ${pnlClass}">${pnlStr}</td>
-            `;
-            tbody.appendChild(tr);
-        } catch (err) {
-            console.error(`Error rendering trade at index ${index}:`, err, trade);
-            const tr = document.createElement('tr');
-            tr.innerHTML = `<td colspan="5" style="color: red;">Error rendering row: ${err.message}</td>`;
-            tbody.appendChild(tr);
+    for (const trade of trades) {
+        const row = document.createElement('tr');
+        const pnl = numberOrNull(trade.realizedPnl ?? trade.info?.realizedPnl);
+        const side = String(trade.side || '?').toUpperCase();
+        const values = [
+            numberOrNull(trade.timestamp) === null ? '—' : new Date(Number(trade.timestamp)).toLocaleString(),
+            side, formatNumber(trade.price, 2), formatNumber(trade.amount, 8),
+            pnl === null ? '—' : `${pnl > 0 ? '+' : ''}${pnl.toFixed(2)}`
+        ];
+        for (const [index, value] of values.entries()) {
+            const cell = document.createElement('td');
+            cell.textContent = value;
+            if (index === 1) cell.className = `trade-side ${side === 'BUY' ? 'buy' : side === 'SELL' ? 'sell' : ''}`;
+            if (index === 4) cell.className = `trade-pnl ${pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : ''}`;
+            row.appendChild(cell);
         }
-    });
+        tbody.appendChild(row);
+    }
 }
 
 async function fetchScheduledPrediction() {
     try {
-        const result = await loadDemoData('/api/latest_prediction');
-
-        if (result.status === 'success' && result.data) {
+        const result = await loadApiData('/api/latest_prediction');
+        if (result.status === 'no_data') {
+            updateScheduledPredictionUI();
+            showStatus('prediction-status', '저장된 예측 정보 없음');
+        } else if (result.status === 'success' && result.data && typeof result.data.prediction === 'string') {
             updateScheduledPredictionUI(result.data);
+            showStatus('prediction-status', `조회: ${new Date().toLocaleTimeString()} · 아래는 마지막 저장된 판단이야.`);
+        } else {
+            throw new Error('예측 응답 오류');
         }
     } catch (error) {
-        console.error('Error fetching scheduled prediction:', error);
+        updateScheduledPredictionUI();
+        showStatus('prediction-status', `${error.message} · 연결과 로그인을 확인해줘.`, true);
     }
 }
+
+let refreshing = false;
+async function refreshDashboard() {
+    if (refreshing || document.hidden) return;
+    refreshing = true;
+    try {
+        // Sequential requests suit the EC2 viewer's single-threaded server.
+        await fetchData();
+        await fetchPosition();
+        await fetchScheduledPrediction();
+        if (document.getElementById('history-tab').classList.contains('active')) await fetchTradeHistory();
+    } finally {
+        refreshing = false;
+    }
+}
+
+initSplits();
+mobileLayout.addEventListener('change', initSplits);
+setupFullscreenButtons();
+initChart();
+refreshDashboard();
+setInterval(refreshDashboard, 30000);
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshDashboard();
+});
