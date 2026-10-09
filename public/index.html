@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Position Now · 샘플 화면</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/split.js@1.6.5/dist/split.min.js"></script>
+</head>
+
+<body>
+    <div class="demo-notice" role="status">샘플 화면 · 모든 수치는 가상 데이터야. 실제 계좌와 연결되지 않았어.</div>
+    <div class="dashboard">
+        <!-- Header Controls -->
+        <header>
+            <div class="logo">Position Now</div>
+            <div class="controls">
+                <select id="symbol-select" aria-label="차트 종목">
+                    <option value="BTCUSDT">BTCUSDT</option>
+                    <option value="ETHUSDT">ETHUSDT</option>
+                    <option value="SOLUSDT">SOLUSDT</option>
+                    <option value="XRPUSDT">XRPUSDT</option>
+                </select>
+                <select id="interval-select" aria-label="캔들 간격">
+                    <option value="1m">1m</option>
+                    <option value="5m">5m</option>
+                    <option value="15m">15m</option>
+                    <option value="1h" selected>1h</option>
+                    <option value="4h">4h</option>
+                    <option value="1d">1d</option>
+                </select>
+                <div class="ma-inputs">
+                    <label>MA1: <input type="number" required id="ma1-input" value="7" min="1" max="500"></label>
+                    <label>MA2: <input type="number" required id="ma2-input" value="25" min="1" max="500"></label>
+                    <label>MA3: <input type="number" required id="ma3-input" value="99" min="1" max="500"></label>
+                </div>
+            </div>
+            <div class="status">
+                <span id="connection-status">Disconnected</span>
+                <span id="last-price">---</span>
+            </div>
+        </header>
+
+        <!-- Main Split Container -->
+        <div class="split-container" id="horizontal-split">
+            <!-- Left: Chart Panel -->
+            <div class="panel chart-panel">
+                <div class="panel-header">
+                    <span class="panel-title">Chart</span>
+                    <button aria-label="패널 확대 또는 닫기" class="btn-fullscreen" data-panel="chart-panel">⛶</button>
+                </div>
+                <div id="chart-container"></div>
+            </div>
+
+            <!-- Right: Sidebar with Order Book and Orders -->
+            <div class="panel sidebar">
+                <div class="split-vertical" id="vertical-split">
+                    <!-- Order Book Panel -->
+                    <div class="panel orderbook-panel">
+                        <div class="panel-header">
+                            <div class="tab-container">
+                                <button class="tab-btn active" data-tab="position-tab">Active Position</button>
+                                <button class="tab-btn" data-tab="history-tab">Trade History</button>
+                            </div>
+                            <button aria-label="패널 확대 또는 닫기" class="btn-fullscreen" data-panel="orderbook-panel">⛶</button>
+                        </div>
+                        <div class="panel-content">
+                            <!-- Tab 1: Active Position -->
+                            <div id="position-tab" class="tab-content active">
+                                <div class="position-dashboard" id="position-dashboard">
+                                    <div class="no-position-message" id="no-position-msg">
+                                        <span>No Active Position</span>
+                                    </div>
+                                    <div class="position-details" id="position-details" style="display: none;">
+                                        <div class="pos-header">
+                                            <span class="pos-symbol" id="pos-symbol">BTC/USDT</span>
+                                            <span class="pos-side long" id="pos-side">LONG</span>
+                                        </div>
+                                        <div class="pos-main-stats">
+                                            <div class="stat-box">
+                                                <span class="label">ROI</span>
+                                                <span class="value positive" id="pos-roi">+0.00%</span>
+                                            </div>
+                                            <div class="stat-box">
+                                                <span class="label">PnL (USDT)</span>
+                                                <span class="value positive" id="pos-pnl">+0.00</span>
+                                            </div>
+                                        </div>
+                                        <div class="pos-grid">
+                                            <div class="grid-item">
+                                                <span class="label">Size</span>
+                                                <span class="value" id="pos-size">0.000</span>
+                                            </div>
+                                            <div class="grid-item">
+                                                <span class="label">Entry Price</span>
+                                                <span class="value" id="pos-entry">0.00</span>
+                                            </div>
+                                            <div class="grid-item">
+                                                <span class="label">Mark Price</span>
+                                                <span class="value" id="pos-mark">0.00</span>
+                                            </div>
+                                            <div class="grid-item">
+                                                <span class="label">Time</span>
+                                                <span class="value" id="pos-time">--:--:--</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Tab 2: Trade History -->
+                            <div id="history-tab" class="tab-content" style="display: none;">
+                                <div class="trade-history-controls"
+                                    style="padding: 8px; text-align: right; border-bottom: 1px solid var(--border-color);">
+                                    <button id="refresh-history-btn"
+                                        style="background: none; border: 1px solid var(--border-color); color: var(--text-color); padding: 4px 8px; cursor: pointer; border-radius: 4px;">↻
+                                        Refresh</button>
+                                </div>
+                                <div class="trade-history-container">
+                                    <table class="trade-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Time</th>
+                                                <th>Side</th>
+                                                <th>Price</th>
+                                                <th>Size</th>
+                                                <th>PnL</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="trade-history-body">
+                                            <!-- Rows will be added here -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- ML Predictions Panel -->
+                    <div class="panel predictions-panel">
+                        <div class="panel-header">
+                            <span class="panel-title">ML Predictions</span>
+                            <button aria-label="패널 확대 또는 닫기" class="btn-fullscreen" data-panel="predictions-panel">⛶</button>
+                        </div>
+                        <div class="panel-content">
+                            <div class="scheduled-prediction" id="scheduled-prediction">
+                                <div class="pred-header-row">
+                                    <div class="pred-time-box">
+                                        <span class="label">Last Update</span>
+                                        <span class="value" id="sched-time">--:--:--</span>
+                                    </div>
+                                    <div class="pred-latency-box">
+                                        <span class="label">모델 연산 시간</span>
+                                        <span class="value" id="sched-latency">--ms</span>
+                                    </div>
+                                </div>
+
+                                <div class="pred-main-result">
+                                    <span class="label">Prediction</span>
+                                    <div class="result-value-box">
+                                        <span class="result-value" id="sched-result">WAITING</span>
+                                        <span class="result-conf" id="sched-conf">--%</span>
+                                    </div>
+                                </div>
+
+                                <div class="pred-probs">
+                                    <div class="prob-row">
+                                        <span class="prob-label">Long Prob</span>
+                                        <div class="prob-bar-container">
+                                            <div class="prob-bar long" id="prob-bar-long" style="width: 0%"></div>
+                                        </div>
+                                        <span class="prob-val" id="prob-val-long">0.0%</span>
+                                    </div>
+                                    <div class="prob-row">
+                                        <span class="prob-label">Short Prob</span>
+                                        <div class="prob-bar-container">
+                                            <div class="prob-bar short" id="prob-bar-short" style="width: 0%"></div>
+                                        </div>
+                                        <span class="prob-val" id="prob-val-short">0.0%</span>
+                                    </div>
+                                    <div class="prob-threshold-info">
+                                        <span id="prob-threshold-text">실거래 기준 미연결</span>
+                                    </div>
+                                </div>
+
+                                <div class="pred-features">
+                                    <div class="feat-header">Key Features</div>
+                                    <div class="feat-grid">
+                                        <div class="feat-item"
+                                            title="Relative Strength Index (14 period). >70 Overbought, <30 Oversold.">
+                                            <span class="feat-label">RSI (14)</span>
+                                            <span class="feat-value" id="feat-rsi">--</span>
+                                        </div>
+                                        <div class="feat-item"
+                                            title="Slope of MA25 in %. Positive = Uptrend, Negative = Downtrend.">
+                                            <span class="feat-label">Slope MA25</span>
+                                            <span class="feat-value" id="feat-slope">--</span>
+                                        </div>
+                                        <div class="feat-item"
+                                            title="Bear Power. Measures strength of bears. Negative = Strong Bearish Pressure.">
+                                            <span class="feat-label">Bear Power</span>
+                                            <span class="feat-value" id="feat-bear">--</span>
+                                        </div>
+                                        <div class="feat-item"
+                                            title="Average Directional Index. >25 means strong trend.">
+                                            <span class="feat-label">ADX</span>
+                                            <span class="feat-value" id="feat-adx">--</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Signal Panel (Bottom) -->
+        <div class="panel signal-panel">
+            <div class="panel-header">
+                <span class="panel-title">Signal Analysis</span>
+            </div>
+            <div class="panel-content">
+                <div id="signal-text">Waiting for data...</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+
+</html>

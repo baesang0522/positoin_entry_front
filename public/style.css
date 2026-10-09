@@ -1,0 +1,853 @@
+:root {
+    --bg-color: #161a25;
+    --panel-bg: #1e222d;
+    --text-color: #d1d4dc;
+    --accent-color: #2962ff;
+    --border-color: #2a2e39;
+    --up-color: #26a69a;
+    --down-color: #ef5350;
+    --header-height: 50px;
+    --signal-height: 80px;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    height: 100vh;
+    overflow: hidden;
+}
+
+.dashboard {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+/* Header */
+header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 20px;
+    height: var(--header-height);
+    background-color: var(--panel-bg);
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
+}
+
+.logo {
+    font-weight: bold;
+    font-size: 1.2rem;
+    color: #fcd535;
+}
+
+.controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.controls select {
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    padding: 5px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.ma-inputs {
+    display: flex;
+    gap: 8px;
+}
+
+.ma-inputs label {
+    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.ma-inputs input[type="number"] {
+    width: 50px;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    padding: 4px 6px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+}
+
+.ma-inputs input[type="number"]:focus {
+    outline: none;
+    border-color: var(--accent-color);
+}
+
+.status {
+    font-family: monospace;
+    font-size: 0.9rem;
+}
+
+#connection-status {
+    margin-right: 10px;
+    color: #888;
+}
+
+#last-price {
+    font-weight: bold;
+    color: var(--text-color);
+}
+
+/* Split Container */
+.split-container {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+.split-vertical {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+/* Gutter Styles */
+.gutter {
+    background-color: var(--border-color);
+    background-repeat: no-repeat;
+    background-position: 50%;
+}
+
+.gutter.gutter-horizontal {
+    cursor: col-resize;
+    background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAeCAYAAADkftS9AAAAIklEQVQoU2M4c+bMfxAGAgYYmwGrIIiDjrELjpo5aiZeMwF+yNnOs5KSvgAAAABJRU5ErkJggg==');
+}
+
+.gutter.gutter-vertical {
+    cursor: row-resize;
+    background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAB4AAAAFAQMAAABo7865AAAABlBMVEVHcEzMzMzyAv2sAAAAAXRSTlMAQObYZgAAABBJREFUeF5jOAMEEAIEEFwAn3kMwcB6I2AAAAAASUVORK5CYII=');
+}
+
+/* Panel Styles */
+.panel {
+    background-color: var(--panel-bg);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    background-color: rgba(0, 0, 0, 0.2);
+    border-bottom: 1px solid var(--border-color);
+    height: 36px;
+    flex-shrink: 0;
+}
+
+.panel-title {
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: #888;
+}
+
+.btn-fullscreen {
+    background: none;
+    border: 1px solid var(--border-color);
+    color: var(--text-color);
+    padding: 4px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.btn-fullscreen:hover {
+    background-color: var(--accent-color);
+    border-color: var(--accent-color);
+}
+
+.panel-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+}
+
+/* Chart Panel */
+.chart-panel {
+    flex: 1;
+}
+
+#chart-container {
+    flex: 1;
+    position: relative;
+}
+
+/* Sidebar */
+.sidebar {
+    width: 350px;
+    border-left: 1px solid var(--border-color);
+}
+
+/* Order Book */
+.orderbook-placeholder {
+    font-family: monospace;
+    font-size: 0.85rem;
+}
+
+.orderbook-header {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 8px;
+    color: #666;
+    font-size: 0.75rem;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 8px;
+}
+
+.order-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 3px 8px;
+}
+
+.order-row.ask {
+    background: linear-gradient(to left, rgba(239, 83, 80, 0.1) 40%, transparent 100%);
+}
+
+.order-row.bid {
+    background: linear-gradient(to left, rgba(38, 166, 154, 0.1) 40%, transparent 100%);
+}
+
+.order-row.ask .price {
+    color: var(--down-color);
+}
+
+.order-row.bid .price {
+    color: var(--up-color);
+}
+
+.spread {
+    text-align: center;
+    padding: 8px;
+    color: #666;
+    font-size: 0.8rem;
+    border: 1px solid var(--border-color);
+    margin: 8px 0;
+}
+
+/* ML Predictions Panel */
+.predictions-display {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+/* Prediction Input Section */
+.prediction-input-section {
+    padding: 12px;
+    background-color: rgba(255, 255, 255, 0.02);
+    border-radius: 8px;
+}
+
+.prediction-input-section label {
+    display: block;
+    font-size: 0.85rem;
+    color: #888;
+    margin-bottom: 8px;
+}
+
+.input-with-button {
+    display: flex;
+    gap: 8px;
+}
+
+#pred-price-input {
+    flex: 1;
+    background-color: var(--bg-color);
+    border: 1px solid var(--border-color);
+    color: var(--text-color);
+    padding: 10px 12px;
+    border-radius: 4px;
+    font-size: 0.95rem;
+}
+
+#pred-price-input:focus {
+    outline: none;
+    border-color: var(--accent-color);
+}
+
+.btn-predict {
+    background: linear-gradient(135deg, var(--accent-color), #1e4ed8);
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 4px;
+    font-weight: bold;
+    cursor: pointer;
+    font-size: 0.95rem;
+    transition: all 0.2s;
+}
+
+.btn-predict:hover {
+    background: linear-gradient(135deg, #1e4ed8, var(--accent-color));
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(41, 98, 255, 0.3);
+}
+
+.btn-predict:active {
+    transform: translateY(0);
+}
+
+/* Prediction Results */
+.prediction-results {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.prediction-item {
+    padding: 12px;
+    border-radius: 8px;
+    background-color: rgba(255, 255, 255, 0.02);
+}
+
+.prediction-label {
+    font-size: 0.85rem;
+    color: #888;
+    margin-bottom: 6px;
+}
+
+.prediction-value {
+    font-size: 1.5rem;
+    font-weight: bold;
+    margin-bottom: 8px;
+}
+
+.prediction-item.long .prediction-value {
+    color: var(--up-color);
+}
+
+.prediction-item.short .prediction-value {
+    color: var(--down-color);
+}
+
+.prediction-item.neutral .prediction-value {
+    color: #888;
+}
+
+.prediction-bar {
+    height: 8px;
+    background-color: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.prediction-fill {
+    height: 100%;
+    transition: width 0.5s ease-out;
+    border-radius: 4px;
+}
+
+.prediction-fill.long-fill {
+    background: linear-gradient(90deg, var(--up-color), #1f8b7f);
+}
+
+.prediction-fill.short-fill {
+    background: linear-gradient(90deg, var(--down-color), #d9453f);
+}
+
+.prediction-fill.neutral-fill {
+    background: linear-gradient(90deg, #888, #666);
+}
+
+.prediction-confidence {
+    margin-top: 8px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-color);
+    text-align: center;
+}
+
+.confidence-label {
+    font-size: 0.85rem;
+    color: #888;
+    margin-right: 8px;
+}
+
+.confidence-value {
+    font-size: 1.1rem;
+    font-weight: bold;
+    color: var(--accent-color);
+}
+
+/* Model Status */
+.model-status {
+    padding: 8px 12px;
+    background-color: rgba(255, 255, 255, 0.02);
+    border-radius: 4px;
+    text-align: center;
+    font-size: 0.85rem;
+}
+
+.status-label {
+    color: #888;
+    margin-right: 6px;
+}
+
+.status-value {
+    color: #fcd535;
+    font-weight: 500;
+}
+
+/* Signal Panel */
+.signal-panel {
+    height: var(--signal-height);
+    border-top: 1px solid var(--border-color);
+    flex-shrink: 0;
+}
+
+.signal-panel .panel-content {
+    padding: 8px 16px;
+}
+
+#signal-text {
+    font-weight: bold;
+    font-size: 1rem;
+}
+
+.signal-buy {
+    color: var(--up-color);
+}
+
+.signal-sell {
+    color: var(--down-color);
+}
+
+.signal-neutral {
+    color: #888;
+}
+
+/* Fullscreen Mode */
+body.panel-fullscreen { overflow: hidden; }
+body.panel-fullscreen .fullscreen-active {
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    width: 100vw !important;
+    height: 100dvh !important;
+}
+
+/* Position Dashboard */
+.position-dashboard {
+    padding: 15px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.no-position-message {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+    color: #555;
+    font-size: 1.1rem;
+    font-style: italic;
+}
+
+.position-details {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.pos-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 10px;
+}
+
+.pos-symbol {
+    font-size: 1.2rem;
+    font-weight: bold;
+    color: #fff;
+}
+
+.pos-side {
+    font-weight: bold;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.9rem;
+}
+
+.pos-side.long {
+    background-color: rgba(38, 166, 154, 0.2);
+    color: var(--up-color);
+}
+
+.pos-side.short {
+    background-color: rgba(239, 83, 80, 0.2);
+    color: var(--down-color);
+}
+
+.pos-roi-section {
+    text-align: center;
+    padding: 10px 0;
+}
+
+.pos-roi-label {
+    display: block;
+    font-size: 0.9rem;
+    color: #888;
+    margin-bottom: 5px;
+}
+
+.pos-roi-value {
+    font-size: 2.5rem;
+    font-weight: bold;
+}
+
+.pos-roi-value.positive {
+    color: var(--up-color);
+}
+
+.pos-roi-value.negative {
+    color: var(--down-color);
+}
+
+.pos-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
+}
+
+.pos-item {
+    display: flex;
+    flex-direction: column;
+}
+
+.pos-item .label {
+    font-size: 0.8rem;
+    color: #888;
+    margin-bottom: 2px;
+}
+
+.pos-item .value {
+    font-size: 1rem;
+    font-weight: 500;
+}
+
+.pos-item .value.positive {
+    color: var(--up-color);
+}
+
+.pos-item .value.negative {
+    color: var(--down-color);
+}
+
+.pos-footer {
+    margin-top: 10px;
+    border-top: 1px solid var(--border-color);
+    padding-top: 10px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8rem;
+    color: #666;
+}
+
+/* Tabs */
+.tab-container {
+    display: flex;
+    gap: 2px;
+}
+
+.tab-btn {
+    background: transparent;
+    border: none;
+    color: #888;
+    padding: 6px 12px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+}
+
+.tab-btn:hover {
+    color: var(--text-color);
+}
+
+.tab-btn.active {
+    color: var(--accent-color);
+    border-bottom-color: var(--accent-color);
+    font-weight: 500;
+}
+
+.tab-content {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.tab-content.active {
+    display: flex !important;
+}
+
+/* Trade History Table */
+.trade-history-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0;
+}
+
+.trade-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+}
+
+.trade-table th {
+    text-align: left;
+    padding: 8px;
+    color: #888;
+    font-weight: 500;
+    position: sticky;
+    top: 0;
+    background-color: var(--panel-bg);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.trade-table td {
+    padding: 6px 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.trade-table tr:hover {
+    background-color: rgba(255, 255, 255, 0.02);
+}
+
+.trade-side.buy {
+    color: var(--up-color);
+}
+
+.trade-side.sell {
+    color: var(--down-color);
+}
+
+.trade-pnl.positive {
+    color: var(--up-color);
+}
+
+.trade-pnl.negative {
+    color: var(--down-color);
+}
+
+/* New Prediction UI */
+.scheduled-prediction {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.pred-header-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8rem;
+    color: #888;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    padding-bottom: 8px;
+}
+
+.pred-header-row .value {
+    color: var(--text-color);
+    font-family: monospace;
+}
+
+.pred-main-result {
+    text-align: center;
+    background: rgba(255, 255, 255, 0.03);
+    padding: 15px;
+    border-radius: 8px;
+}
+
+.pred-main-result .label {
+    display: block;
+    font-size: 0.85rem;
+    color: #888;
+    margin-bottom: 5px;
+}
+
+.result-value-box {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: 10px;
+}
+
+.result-value {
+    font-size: 1.8rem;
+    font-weight: bold;
+}
+
+.result-value.positive {
+    color: var(--up-color);
+}
+
+.result-value.negative {
+    color: var(--down-color);
+}
+
+.result-conf {
+    font-size: 1rem;
+    color: var(--accent-color);
+}
+
+.pred-probs {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.prob-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.85rem;
+}
+
+.prob-label {
+    width: 70px;
+    color: #aaa;
+}
+
+.prob-bar-container {
+    flex: 1;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.prob-bar {
+    height: 100%;
+    transition: width 0.5s ease;
+}
+
+.prob-bar.long {
+    background-color: var(--up-color);
+}
+
+.prob-bar.short {
+    background-color: var(--down-color);
+}
+
+.prob-val {
+    width: 45px;
+    text-align: right;
+    font-family: monospace;
+}
+
+.prob-threshold-info {
+    text-align: right;
+    font-size: 0.75rem;
+    color: #666;
+    margin-top: 2px;
+}
+
+.pred-features {
+    margin-top: 5px;
+}
+
+.feat-header {
+    font-size: 0.85rem;
+    color: #888;
+    margin-bottom: 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    padding-bottom: 4px;
+}
+
+.feat-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+
+.feat-item {
+    background: rgba(255, 255, 255, 0.02);
+    padding: 8px;
+    border-radius: 4px;
+    cursor: help;
+    transition: background 0.2s;
+}
+
+.feat-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.feat-label {
+    display: block;
+    font-size: 0.75rem;
+    color: #888;
+    margin-bottom: 2px;
+}
+
+.feat-value {
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: var(--text-color);
+}
+/* Standalone demo and responsive layout. */
+body { height: auto; }
+.demo-notice {
+    padding: 10px 16px;
+    background: #332b15;
+    color: #ffe08a;
+    font-size: 14px;
+    line-height: 1.5;
+}
+.dashboard { height: calc(100dvh - 41px); }
+.panel, .split-container, .split-vertical, .panel-content { min-height: 0; min-width: 0; }
+#chart-container { min-height: 240px; }
+.chart-panel { min-width: 0; }
+header { flex-wrap: wrap; gap: 12px; height: auto; min-height: 60px; padding: 12px 16px; }
+.controls { flex-wrap: wrap; }
+.controls select, .controls input, .tab-btn, .btn-fullscreen, #refresh-history-btn { min-height: 44px; }
+.panel-header { height: auto; min-height: 48px; gap: 8px; }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid #8bb1ff; outline-offset: 2px; }
+.pos-main-stats { display: flex; gap: 28px; margin: 16px 0; }
+.stat-box, .grid-item { display: flex; flex-direction: column; gap: 5px; }
+.stat-box .label, .grid-item .label { color: #aaa; font-size: 13px; }
+.value.positive { color: var(--up-color); }
+.value.negative { color: var(--down-color); }
+.trade-history-container { overflow-x: auto; }
+.trade-table { min-width: 350px; }
+.pred-header-row { gap: 12px; flex-wrap: wrap; }
+
+@media (max-width: 760px) {
+    body { overflow: auto; }
+    .dashboard { height: auto; min-height: 100dvh; }
+    header { align-items: flex-start; }
+    .controls { order: 3; width: 100%; }
+    .ma-inputs { flex-wrap: wrap; }
+    .ma-inputs input[type="number"] { width: 64px; font-size: 16px; }
+    .status { font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
+    .split-container, .split-vertical { display: flex; flex-direction: column; height: auto; overflow: visible; }
+    .split-container { flex: none; }
+    .chart-panel { flex: none; height: 380px; }
+    .sidebar { width: 100%; border-left: 0; }
+    .orderbook-panel, .predictions-panel { border-top: 1px solid var(--border-color); }
+    .position-dashboard { padding: 4px; }
+    .position-dashboard, .tab-content { height: auto; }
+    .signal-panel { height: auto; min-height: 90px; }
+    .tab-btn { padding: 6px 8px; }
+}
