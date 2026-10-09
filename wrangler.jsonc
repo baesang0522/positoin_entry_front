@@ -1,8 +1,16 @@
 {
   "name": "position-entry-front",
+  "main": "worker.mjs",
   "compatibility_date": "2026-10-09",
   "workers_dev": true,
   "assets": {
-    "directory": "./public"
-  }
+    "directory": "./public",
+    "run_worker_first": ["/api/*"]
+  },
+  "vpc_services": [
+    {
+      "binding": "POSITION_API",
+      "service_id": "01a11f7e-ebc4-7311-bab1-31db6059d7db"
+    }
+  ]
 }
