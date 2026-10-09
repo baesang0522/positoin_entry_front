@@ -27,7 +27,7 @@ function showStatus(id, message, failed = false) {
 }
 
 function snapshotStatus(data) {
-    const saved = data.last_updated ? `서버 저장: ${data.last_updated.replace('T', ' ')}` : '서버 저장 시각 없음';
+    const saved = data.last_updated ? `서버 저장: ${data.last_updated.replace('T', ' ').replace(/(\d{2}:\d{2}:\d{2})\.\d+/, '$1')}` : '서버 저장 시각 없음';
     return `${saved} · 조회: ${new Date().toLocaleTimeString()}`;
 }
 
@@ -490,7 +490,7 @@ function updateTradeHistoryUI(trades) {
         tbody.appendChild(row);
         return;
     }
-    for (const trade of trades) {
+    for (const trade of [...trades].sort((a, b) => (numberOrNull(b.timestamp) ?? -Infinity) - (numberOrNull(a.timestamp) ?? -Infinity))) {
         const row = document.createElement('tr');
         const pnl = numberOrNull(trade.realizedPnl ?? trade.info?.realizedPnl);
         const side = String(trade.side || '?').toUpperCase();
@@ -518,7 +518,7 @@ async function fetchScheduledPrediction() {
             showStatus('prediction-status', '저장된 예측 정보 없음');
         } else if (result.status === 'success' && result.data && typeof result.data.prediction === 'string') {
             updateScheduledPredictionUI(result.data);
-            showStatus('prediction-status', `조회: ${new Date().toLocaleTimeString()} · 아래는 마지막 저장된 판단이야.`);
+            showStatus('prediction-status', `조회: ${new Date().toLocaleTimeString()}`);
         } else {
             throw new Error('예측 응답 오류');
         }

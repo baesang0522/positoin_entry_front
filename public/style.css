@@ -806,16 +806,9 @@ body.panel-fullscreen .fullscreen-active {
     font-weight: 500;
     color: var(--text-color);
 }
-/* Standalone demo and responsive layout. */
+/* Responsive layout. */
 body { height: auto; }
-.demo-notice {
-    padding: 10px 16px;
-    background: #332b15;
-    color: #ffe08a;
-    font-size: 14px;
-    line-height: 1.5;
-}
-.dashboard { height: calc(100dvh - 41px); }
+.dashboard { height: 100dvh; }
 .panel, .split-container, .split-vertical, .panel-content { min-height: 0; min-width: 0; }
 #chart-container { min-height: 240px; }
 .chart-panel { min-width: 0; }
