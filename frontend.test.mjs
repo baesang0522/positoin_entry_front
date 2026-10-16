@@ -12,12 +12,20 @@ async function setup() {
     for (const [id, value] of Object.entries({ 'symbol-select': 'BTCUSDT', 'interval-select': '1h' })) els[id].value = value;
     const chartSeries = { lines: new Set(), setData(data) { this.data = data; }, setMarkers(markers) { this.markers = markers; }, applyOptions() {},
         createPriceLine(options) { this.lines.add(options); return options; }, removePriceLine(line) { this.lines.delete(line); } };
+    const timeScale = {
+        range: null,
+        getVisibleLogicalRange() { return this.range; },
+        setVisibleLogicalRange(range) { this.range = range; this.onChange?.(range); },
+        subscribeVisibleLogicalRangeChange(fn) { this.onChange = fn; },
+        resetTimeScale() { this.setVisibleLogicalRange({ from: Math.max(0, chartSeries.data.length - 100), to: chartSeries.data.length - 1 }); }
+    };
+    const timeouts = [];
     const intervals = [];
     const document = { hidden: true, getElementById(id) { assert.ok(els[id], `Missing HTML element ${id}`); return els[id]; }, querySelectorAll: () => [], createElement: element, addEventListener() {} };
     const context = vm.createContext({ document, window: { matchMedia: () => ({ matches: true, addEventListener() {} }) },
-        console: { log() {}, error() {} }, AbortSignal, URLSearchParams, setTimeout, setInterval: (fn, ms) => intervals.push([fn, ms]),
+        console: { log() {}, error() {} }, AbortSignal, URLSearchParams, setTimeout: (fn, ms) => timeouts.push([fn, ms]), setInterval: (fn, ms) => intervals.push([fn, ms]),
         ResizeObserver: class { observe() {} },
-        LightweightCharts: { CrosshairMode: { Normal: 0 }, createChart: () => ({ addCandlestickSeries: () => chartSeries, addLineSeries: () => { throw new Error('Moving average series should not be created'); }, applyOptions() {} }) }
+        LightweightCharts: { CrosshairMode: { Normal: 0 }, createChart: () => ({ addCandlestickSeries: () => chartSeries, addLineSeries: () => { throw new Error('Moving average series should not be created'); }, applyOptions() {}, timeScale: () => timeScale }) }
     });
     const modules = new Map();
     function getModule(url) {
@@ -32,7 +40,7 @@ async function setup() {
     // Keep exports out of the VM global scope so missing imports cannot pass accidentally.
     const exports = Object.assign({}, ...[...modules.values()].map(module => module.namespace));
     Object.defineProperty(exports, 'fetch', { get: () => context.fetch, set: value => { context.fetch = value; } });
-    return { context: exports, els, document, chartSeries, intervals, globals: context };
+    return { context: exports, els, document, chartSeries, timeScale, timeouts, intervals, globals: context };
 }
 const position = { status: 'active', last_updated: '2026-10-09T12:00:00', data: { symbol: 'BTC/USDT', side: 'LONG', size: 0.002, entry_price: 60000, mark_price: 61000, unrealized_pnl: 2, roi: 1.67, timestamp: null } };
 const chart = (price = 100) => [[100000, String(price), String(price + 1), String(price - 1), String(price)]];
@@ -255,4 +263,166 @@ test('arrows survive position refresh, clear on history failure, and follow char
     failHistory = true;
     await context.fetchTradeHistory();
     assert.equal(chartSeries.markers.length, 0);
+});
+
+const candleTime = index => Date.parse('2026-10-01T00:00:00Z') / 1000 + index * 60;
+const candleRows = (start, count, price = 100) => Array.from({ length: count }, (_, i) =>
+    [candleTime(start + i) * 1000, String(price), String(price + 1), String(price - 1), String(price)]);
+const settle = () => new Promise(resolve => setImmediate(resolve));
+
+test('history API uses a millisecond end cursor, accepts an exhausted page, and rejects malformed ordering', async () => {
+    const { context } = await setup();
+    let calls = 0;
+    context.fetch = async url => {
+        calls++;
+        assert.equal(new URL(url).searchParams.get('endTime'), '99999');
+        return Response.json([]);
+    };
+    assert.equal((await context.loadBinanceCandles('BTCUSDT', '1m', 99999)).candles.length, 0);
+    for (const invalid of [-1, NaN, Infinity, null, '99999', 1.5]) {
+        await assert.rejects(context.loadBinanceCandles('BTCUSDT', '1m', invalid));
+    }
+    assert.equal(calls, 1);
+    for (const rows of [[...chart(), ...chart()], [...candleRows(2, 1), ...candleRows(1, 1)], [[1, '', 1, 1, 1]]]) {
+        context.fetch = async () => Response.json(rows);
+        await assert.rejects(context.loadBinanceCandles('BTCUSDT', '1m', 99999));
+    }
+});
+
+test('left-edge scrolling prepends one page, keeps the current viewport, and draws older DB trade markers', async () => {
+    const { context, els, chartSeries, timeScale } = await setup();
+    els['interval-select'].value = '1m';
+    let release, historyCalls = 0;
+    context.fetch = async url => {
+        const end = new URL(url).searchParams.get('endTime');
+        if (end) {
+            historyCalls++;
+            assert.equal(Number(end), candleTime(1000) * 1000 - 1);
+            return new Promise(resolve => { release = () => resolve(Response.json(candleRows(500, 501))); });
+        }
+        return Response.json(candleRows(1000, 500));
+    };
+    await context.fetchData();
+    context.setTradeMarkers([{symbol:'BTC/USDT',side:'buy',timestamp:(candleTime(900)+12)*1000,realizedPnl:0}]);
+    assert.equal(chartSeries.markers.length, 0);
+    timeScale.setVisibleLogicalRange({from:100,to:200});
+    assert.equal(historyCalls, 0);
+    timeScale.setVisibleLogicalRange({from:10.25,to:80.25});
+    timeScale.setVisibleLogicalRange({from:20.25,to:90.25});
+    await context.loadOlderCandles();
+    assert.equal(historyCalls, 1);
+    release();
+    await settle();
+    assert.equal(chartSeries.data.length, 1000);
+    assert.equal(new Set(chartSeries.data.map(c => c.time)).size, 1000);
+    assert.equal(timeScale.range.from, 520.25);
+    assert.equal(timeScale.range.to, 590.25);
+    assert.equal(chartSeries.markers[0].time, candleTime(900));
+    assert.equal(chartSeries.markers[0].shape, 'arrowUp');
+    // The history can also arrive after its candles (e.g. a DB refresh).
+    context.setTradeMarkers([{symbol:'BTC/USDT',side:'sell',timestamp:(candleTime(800)+12)*1000,realizedPnl:0}]);
+    assert.equal(chartSeries.markers[0].time, candleTime(800));
+    assert.equal(chartSeries.markers[0].shape, 'arrowDown');
+});
+
+test('latest refresh and history can finish in either order without dropping history or jumping to the latest candles', async () => {
+    for (const historyFirst of [false, true]) {
+        const { context, chartSeries, timeScale } = await setup();
+        context.fetch = async () => Response.json(candleRows(1000, 500));
+        await context.fetchData();
+        timeScale.range = {from:20,to:100};
+        let releaseHistory, releaseLatest;
+        context.fetch = async url => new Promise(resolve => {
+            if (new URL(url).searchParams.has('endTime')) releaseHistory = () => resolve(Response.json(candleRows(500, 500)));
+            else releaseLatest = () => resolve(Response.json(candleRows(1001, 500, 200)));
+        });
+        const older = context.loadOlderCandles();
+        const latest = context.fetchData();
+        if (historyFirst) { releaseHistory(); await older; releaseLatest(); await latest; }
+        else { releaseLatest(); await latest; releaseHistory(); await older; }
+        assert.equal(chartSeries.data.length, 1001);
+        assert.equal(chartSeries.data[0].time, candleTime(500));
+        assert.equal(chartSeries.data.at(-1).close, 200);
+        assert.equal(timeScale.range.from, 520);
+        assert.equal(timeScale.range.to, 600);
+    }
+});
+
+test('history errors retain candles and can retry, while an empty or non-progressing page stops requests', async () => {
+    for (const ending of [[], candleRows(1000, 1)]) {
+        const { context, chartSeries, els } = await setup();
+        context.fetch = async () => Response.json(candleRows(1000, 500));
+        await context.fetchData();
+        context.fetch = async () => new Response('', {status:429});
+        await context.loadOlderCandles();
+        assert.match(els['connection-status'].textContent, /과거 차트 조회 실패/);
+        assert.equal(chartSeries.data.length, 500);
+        assert.equal(els['last-price'].textContent, '100.00');
+        let calls = 0;
+        context.fetch = async () => { calls++; return Response.json(ending); };
+        await context.loadOlderCandles();
+        await context.loadOlderCandles();
+        assert.equal(calls, 1);
+        assert.match(els['connection-status'].textContent, /더 이전/);
+        // Exhaustion belongs to this symbol/interval only.
+        els['interval-select'].value = '1m';
+        context.fetch = async () => Response.json(candleRows(1000, 500));
+        await context.fetchData();
+        context.fetch = async () => Response.json(candleRows(500, 500));
+        await context.loadOlderCandles();
+        assert.equal(chartSeries.data.length, 1000);
+    }
+});
+
+test('old history results and failures cannot affect a new symbol or release its request lock', async () => {
+    for (const failOld of [false, true]) {
+        const { context, chartSeries, els } = await setup();
+        context.fetch = async () => Response.json(candleRows(1000, 500));
+        await context.fetchData();
+        let finishOld;
+        context.fetch = async () => new Promise((resolve, reject) => {
+            finishOld = () => failOld ? reject(new Error('old request')) : resolve(Response.json(candleRows(500, 500)));
+        });
+        const old = context.loadOlderCandles();
+        els['symbol-select'].value = 'ETHUSDT';
+        context.fetch = async () => Response.json(candleRows(2000, 500, 200));
+        await context.fetchData();
+        let finishNew, calls = 0;
+        context.fetch = async () => { calls++; return new Promise(resolve => { finishNew = () => resolve(Response.json(candleRows(1500, 500, 200))); }); };
+        const fresh = context.loadOlderCandles();
+        finishOld();
+        await old;
+        assert.equal(chartSeries.data.length, 500);
+        assert.equal(chartSeries.data[0].time, candleTime(2000));
+        assert.ok(!els['connection-status'].textContent.includes('old request'));
+        await context.loadOlderCandles();
+        assert.equal(calls, 1);
+        finishNew();
+        await fresh;
+        assert.equal(chartSeries.data.length, 1000);
+        assert.ok(chartSeries.data.every(c => c.close === 200));
+    }
+});
+
+test('a wide pan requests consecutive pages until the visible left edge is filled', async () => {
+    const { context, chartSeries, timeScale, timeouts } = await setup();
+    context.fetch = async () => Response.json(candleRows(1000, 500));
+    await context.fetchData();
+    let calls = 0;
+    context.fetch = async url => {
+        calls++;
+        const end = Number(new URL(url).searchParams.get('endTime'));
+        return Response.json(candleRows(end === candleTime(1000)*1000-1 ? 500 : 0, 500));
+    };
+    timeScale.setVisibleLogicalRange({from:-600,to:100});
+    await settle();
+    assert.equal(chartSeries.data.length, 1000);
+    assert.equal(timeScale.range.from, -100);
+    timeouts.shift()[0]();
+    await settle();
+    assert.equal(chartSeries.data.length, 1500);
+    assert.equal(timeScale.range.from, 400);
+    timeouts.shift()[0]();
+    await settle();
+    assert.equal(calls, 2);
 });

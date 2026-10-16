@@ -45,6 +45,10 @@ let chart;
 let candlestickSeries;
 let chartCandles = [];
 let recentTrades = [];
+let chartGeneration = 0;
+let historyLoading = false;
+let historyExhausted = false;
+let applyingCandles = false;
 
 export function initChart() {
     if (typeof LightweightCharts === 'undefined') {
@@ -101,6 +105,65 @@ export function initChart() {
     new ResizeObserver(() => {
         chart.applyOptions({ width: chartContainer.clientWidth, height: chartContainer.clientHeight });
     }).observe(chartContainer);
+    chart.timeScale().subscribeVisibleLogicalRangeChange(loadHistoryIfNeeded);
+}
+
+function loadHistoryIfNeeded() {
+    const range = chart.timeScale().getVisibleLogicalRange();
+    if (!applyingCandles && range && range.from < 50) loadOlderCandles();
+}
+
+function mergeCandles(candles) {
+    const range = chart.timeScale().getVisibleLogicalRange();
+    const previousLength = chartCandles.length;
+    const previousFirst = chartCandles[0]?.time;
+    const merged = new Map(chartCandles.map(candle => [candle.time, candle]));
+    for (const candle of candles) merged.set(candle.time, candle);
+    chartCandles = [...merged.values()].sort((a, b) => a.time - b.time);
+    const prepended = chartCandles.filter(candle => candle.time < previousFirst).length;
+    applyingCandles = true;
+    try {
+        candlestickSeries.setData(chartCandles);
+        // Preserve the candles being viewed, including pans made while the request was in flight.
+        if (range && previousLength && (prepended || range.to < previousLength - 1)) {
+            chart.timeScale().setVisibleLogicalRange({ from: range.from + prepended, to: range.to + prepended });
+        } else if (!previousLength) {
+            chart.timeScale().resetTimeScale();
+        }
+        renderEntryMarkers();
+    } finally {
+        applyingCandles = false;
+    }
+}
+
+export async function loadOlderCandles() {
+    if (!chartCandles.length || historyLoading || historyExhausted) return;
+    const generation = chartGeneration;
+    const oldest = chartCandles[0].time;
+    historyLoading = true;
+    connectionStatus.textContent = '과거 차트 조회 중';
+    try {
+        const { candles } = await loadBinanceCandles(currentSymbol, currentInterval, oldest * 1000 - 1);
+        if (generation !== chartGeneration) return;
+        const older = candles.filter(candle => candle.time < oldest);
+        if (!older.length) {
+            historyExhausted = true;
+            connectionStatus.textContent = '더 이전의 캔들 데이터 없음';
+        } else {
+            mergeCandles(older);
+            connectionStatus.textContent = `과거 캔들 ${older.length}개 추가`;
+            // A wide or fast pan may need more than one page to fill the visible range.
+            setTimeout(loadHistoryIfNeeded, 0);
+        }
+        connectionStatus.style.color = '#26a69a';
+    } catch (error) {
+        if (generation === chartGeneration) {
+            connectionStatus.textContent = `과거 차트 조회 실패 · 다시 스크롤해줘 · ${error.message}`;
+            connectionStatus.style.color = 'red';
+        }
+    } finally {
+        if (generation === chartGeneration) historyLoading = false;
+    }
 }
 
 let currentPriceLine = null;
@@ -138,7 +201,7 @@ export function resizeChart(fitContent = false) {
 }
 
 let chartRequest = 0;
-let displayedChart = '';
+let selectedChart = '';
 export async function fetchData() {
     if (!chart) return;
     currentSymbol = symbolSelect.value;
@@ -149,7 +212,11 @@ export async function fetchData() {
     const requestInterval = currentInterval;
 
     const chartKey = [requestSymbol, requestInterval].join(':');
-    if (chartKey !== displayedChart) {
+    if (chartKey !== selectedChart) {
+        selectedChart = chartKey;
+        chartGeneration++;
+        historyLoading = false;
+        historyExhausted = false;
         chartCandles = [];
         candlestickSeries.setData([]);
         candlestickSeries.setMarkers([]);
@@ -168,15 +235,7 @@ export async function fetchData() {
             return;
         }
 
-        if (!Array.isArray(data.candles) || !data.candles.length ||
-            data.candles.some((c, i, a) => ![c.time, c.open, c.high, c.low, c.close].every(Number.isFinite) || (i > 0 && c.time <= a[i - 1].time))) {
-            throw new Error('차트 데이터가 비어 있거나 잘못됐어.');
-        }
-        displayedChart = chartKey;
-        // Update Series
-        candlestickSeries.setData(data.candles);
-        chartCandles = data.candles;
-        renderEntryMarkers();
+        mergeCandles(data.candles);
 
         // Update UI
         const lastCandle = data.candles[data.candles.length - 1];
