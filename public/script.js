@@ -31,28 +31,50 @@ function snapshotStatus(data) {
     return `${saved} · 조회: ${new Date().toLocaleTimeString()}`;
 }
 
+function entryMarkers(trades, candles, symbol, interval) {
+    const seconds = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 }[interval];
+    const markers = new Map();
+    for (const trade of trades) {
+        const pnl = numberOrNull(trade.realizedPnl ?? trade.info?.realizedPnl);
+        const timestamp = numberOrNull(trade.timestamp);
+        const tradeSymbol = String(trade.symbol || trade.info?.symbol || '').split(':')[0].replace('/', '');
+        const side = String(trade.side || '').toUpperCase();
+        // shortcut: zero-PnL exits also look like entries; use explicit entry metadata if exact classification is needed.
+        if (pnl !== 0 || timestamp === null || timestamp <= 0 || tradeSymbol !== symbol || !['BUY', 'SELL'].includes(side)) continue;
+        const time = timestamp / 1000;
+        const candle = candles.find(c => c.time <= time && time < c.time + seconds);
+        if (!candle) continue;
+        const isLong = side === 'BUY';
+        // Multiple fills in the same candle and direction share one arrow.
+        markers.set(`${candle.time}:${side}`, {
+            time: candle.time,
+            position: isLong ? 'belowBar' : 'aboveBar',
+            color: isLong ? '#26a69a' : '#ef5350',
+            shape: isLong ? 'arrowUp' : 'arrowDown',
+            text: isLong ? 'LONG ENTRY' : 'SHORT ENTRY'
+        });
+    }
+    return [...markers.values()].sort((a, b) => a.time - b.time);
+}
+
+function renderEntryMarkers() {
+    if (candlestickSeries) candlestickSeries.setMarkers(entryMarkers(recentTrades, chartCandles, currentSymbol, currentInterval));
+}
+
 // DOM Elements
 const chartContainer = document.getElementById('chart-container');
 const symbolSelect = document.getElementById('symbol-select');
 const intervalSelect = document.getElementById('interval-select');
-const ma1Input = document.getElementById('ma1-input');
-const ma2Input = document.getElementById('ma2-input');
-const ma3Input = document.getElementById('ma3-input');
 const connectionStatus = document.getElementById('connection-status');
 const lastPriceEl = document.getElementById('last-price');
-const signalText = document.getElementById('signal-text');
 
 // State
 let currentSymbol = symbolSelect.value;
 let currentInterval = intervalSelect.value;
-let currentMa1 = parseInt(ma1Input.value);
-let currentMa2 = parseInt(ma2Input.value);
-let currentMa3 = parseInt(ma3Input.value);
 let chart;
 let candlestickSeries;
-let ma1Series;
-let ma2Series;
-let ma3Series;
+let chartCandles = [];
+let recentTrades = [];
 let horizontalSplit;
 let verticalSplit;
 
@@ -193,9 +215,6 @@ function initChart() {
         wickDownColor: '#ef5350',
     });
 
-    ma1Series = chart.addLineSeries({ color: '#e91e63', lineWidth: 1, title: `MA${currentMa1}` });
-    ma2Series = chart.addLineSeries({ color: '#9c27b0', lineWidth: 1, title: `MA${currentMa2}` });
-    ma3Series = chart.addLineSeries({ color: '#2196f3', lineWidth: 1, title: `MA${currentMa3}` });
 
     new ResizeObserver(() => {
         chart.applyOptions({ width: chartContainer.clientWidth, height: chartContainer.clientHeight });
@@ -242,7 +261,6 @@ function updatePositionDashboard(data) {
             candlestickSeries.removePriceLine(currentPriceLine);
             currentPriceLine = null;
         }
-        if (candlestickSeries) candlestickSeries.setMarkers([]);
         return;
     }
 
@@ -278,7 +296,6 @@ function updatePositionDashboard(data) {
     if (candlestickSeries && currentSymbol !== pos.symbol.split(':')[0].replace('/', '')) {
         if (currentPriceLine) candlestickSeries.removePriceLine(currentPriceLine);
         currentPriceLine = null;
-        candlestickSeries.setMarkers([]);
         return;
     }
     if (candlestickSeries) {
@@ -301,8 +318,6 @@ function updatePositionDashboard(data) {
             title: `${pos.side} ENTRY`,
         });
 
-        // Exchange position timestamp is not a confirmed entry timestamp.
-        candlestickSeries.setMarkers([]);
     }
 }
 
@@ -337,13 +352,11 @@ async function fetchData() {
     // Capture current state at the start of the request
     const requestSymbol = currentSymbol;
     const requestInterval = currentInterval;
-    const requestMa1 = currentMa1;
-    const requestMa2 = currentMa2;
-    const requestMa3 = currentMa3;
 
-    const chartKey = [requestSymbol, requestInterval, requestMa1, requestMa2, requestMa3].join(':');
+    const chartKey = [requestSymbol, requestInterval].join(':');
     if (chartKey !== displayedChart) {
-        for (const series of [candlestickSeries, ma1Series, ma2Series, ma3Series]) series.setData([]);
+        chartCandles = [];
+        candlestickSeries.setData([]);
         candlestickSeries.setMarkers([]);
         if (currentPriceLine) candlestickSeries.removePriceLine(currentPriceLine);
         currentPriceLine = null;
@@ -351,34 +364,24 @@ async function fetchData() {
     }
     connectionStatus.textContent = '차트 조회 중';
     try {
-        const data = await loadApiData(`/api/data?symbol=${requestSymbol}&interval=${requestInterval}&ma1=${requestMa1}&ma2=${requestMa2}&ma3=${requestMa3}`);
+        const data = await loadApiData(`/api/data?symbol=${requestSymbol}&interval=${requestInterval}`);
 
         // Check if the state has changed while we were fetching
         if (requestId !== chartRequest || requestSymbol !== currentSymbol ||
-            requestInterval !== currentInterval ||
-            requestMa1 !== currentMa1 ||
-            requestMa2 !== currentMa2 ||
-            requestMa3 !== currentMa3) {
+            requestInterval !== currentInterval) {
             console.log('Discarding stale data');
             return;
         }
 
         if (!Array.isArray(data.candles) || !data.candles.length ||
-            data.candles.some((c, i, a) => ![c.time, c.open, c.high, c.low, c.close].every(Number.isFinite) || (i > 0 && c.time <= a[i - 1].time)) ||
-            ['ma1', 'ma2', 'ma3'].some(key => !Array.isArray(data[key]?.data))) {
+            data.candles.some((c, i, a) => ![c.time, c.open, c.high, c.low, c.close].every(Number.isFinite) || (i > 0 && c.time <= a[i - 1].time))) {
             throw new Error('차트 데이터가 비어 있거나 잘못됐어.');
         }
         displayedChart = chartKey;
         // Update Series
         candlestickSeries.setData(data.candles);
-        ma1Series.setData(data.ma1.data);
-        ma2Series.setData(data.ma2.data);
-        ma3Series.setData(data.ma3.data);
-
-        // Update series titles with actual periods
-        ma1Series.applyOptions({ title: `MA${data.ma1.period}` });
-        ma2Series.applyOptions({ title: `MA${data.ma2.period}` });
-        ma3Series.applyOptions({ title: `MA${data.ma3.period}` });
+        chartCandles = data.candles;
+        renderEntryMarkers();
 
         // Update UI
         const lastCandle = data.candles[data.candles.length - 1];
@@ -386,16 +389,13 @@ async function fetchData() {
         connectionStatus.textContent = `차트 조회 ${new Date().toLocaleTimeString()}`;
         connectionStatus.style.color = '#26a69a';
 
-        signalText.textContent = '모델의 최근 판단은 ML Predictions에서 확인해줘.';
-        signalText.className = 'signal-neutral';
 
     } catch (error) {
         // Only report error if it's for the current state
         if (requestId === chartRequest) {
             console.error(error);
-            connectionStatus.textContent = `차트 갱신 실패 · ${error.message}`;
+            connectionStatus.textContent = `차트 갱신 실패 · 이전 조회 결과 · ${error.message}`;
             lastPriceEl.textContent = '—';
-            signalText.textContent = '차트 갱신 실패 · 남아 있는 차트는 이전 조회 결과야.';
             connectionStatus.style.color = 'red';
         }
     }
@@ -410,24 +410,6 @@ symbolSelect.addEventListener('change', (e) => {
 
 intervalSelect.addEventListener('change', (e) => {
     currentInterval = e.target.value;
-    fetchData();
-});
-
-ma1Input.addEventListener('change', (e) => {
-    if (!e.target.reportValidity()) return;
-    currentMa1 = Number(e.target.value);
-    fetchData();
-});
-
-ma2Input.addEventListener('change', (e) => {
-    if (!e.target.reportValidity()) return;
-    currentMa2 = Number(e.target.value);
-    fetchData();
-});
-
-ma3Input.addEventListener('change', (e) => {
-    if (!e.target.reportValidity()) return;
-    currentMa3 = Number(e.target.value);
     fetchData();
 });
 
@@ -469,8 +451,12 @@ async function fetchTradeHistory() {
         const result = await loadApiData('/api/trades');
         if (result.status !== 'success' || !Array.isArray(result.data)) throw new Error('거래내역 응답 오류');
         updateTradeHistoryUI(result.data);
+        recentTrades = result.data;
+        renderEntryMarkers();
         showStatus('history-status', snapshotStatus(result));
     } catch (error) {
+        recentTrades = [];
+        renderEntryMarkers();
         document.getElementById('trade-history-body').replaceChildren();
         showStatus('history-status', `${error.message} · 연결과 로그인을 확인해줘.`, true);
     } finally {
@@ -537,7 +523,7 @@ async function refreshDashboard() {
         await fetchData();
         await fetchPosition();
         await fetchScheduledPrediction();
-        if (document.getElementById('history-tab').classList.contains('active')) await fetchTradeHistory();
+        await fetchTradeHistory();
     } finally {
         refreshing = false;
     }

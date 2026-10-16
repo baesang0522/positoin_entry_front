@@ -30,11 +30,6 @@
                     <option value="4h">4h</option>
                     <option value="1d">1d</option>
                 </select>
-                <div class="ma-inputs">
-                    <label>MA1: <input type="number" required id="ma1-input" value="7" min="1" max="500"></label>
-                    <label>MA2: <input type="number" required id="ma2-input" value="25" min="1" max="500"></label>
-                    <label>MA3: <input type="number" required id="ma3-input" value="99" min="1" max="500"></label>
-                </div>
             </div>
             <div class="status">
                 <span id="connection-status">차트 조회 대기</span>
@@ -218,15 +213,6 @@
             </div>
         </div>
 
-        <!-- Signal Panel (Bottom) -->
-        <div class="panel signal-panel">
-            <div class="panel-header">
-                <span class="panel-title">Signal Analysis</span>
-            </div>
-            <div class="panel-content">
-                <div id="signal-text">모델의 최근 판단은 ML Predictions에서 확인해줘.</div>
-            </div>
-        </div>
     </div>
 
     <script src="script.js"></script>

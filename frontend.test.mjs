@@ -10,20 +10,20 @@ function setup() {
     const element = () => ({ style: {}, textContent: '', children: [], value: '', classList: { contains: () => false },
         addEventListener() {}, appendChild(child) { this.children.push(child); }, replaceChildren() { this.children = []; } });
     const els = Object.fromEntries([...html.matchAll(/id="([^"]+)"/g)].map(match => [match[1], element()]));
-    for (const [id, value] of Object.entries({ 'symbol-select': 'BTCUSDT', 'interval-select': '1h', 'ma1-input': '7', 'ma2-input': '25', 'ma3-input': '99' })) els[id].value = value;
-    const chartSeries = { setData(data) { this.data = data; }, setMarkers() {}, applyOptions() {}, createPriceLine() { return {}; }, removePriceLine() {} };
+    for (const [id, value] of Object.entries({ 'symbol-select': 'BTCUSDT', 'interval-select': '1h' })) els[id].value = value;
+    const chartSeries = { setData(data) { this.data = data; }, setMarkers(markers) { this.markers = markers; }, applyOptions() {}, createPriceLine() { return {}; }, removePriceLine() {} };
     const intervals = [];
     const document = { hidden: true, getElementById(id) { assert.ok(els[id], `Missing HTML element ${id}`); return els[id]; }, querySelectorAll: () => [], createElement: element, addEventListener() {} };
     const context = vm.createContext({ document, window: { matchMedia: () => ({ matches: true, addEventListener() {} }) },
         console: { log() {}, error() {} }, AbortSignal, setTimeout, setInterval: (fn, ms) => intervals.push([fn, ms]),
         ResizeObserver: class { observe() {} },
-        LightweightCharts: { CrosshairMode: { Normal: 0 }, createChart: () => ({ addCandlestickSeries: () => chartSeries, addLineSeries: () => ({ ...chartSeries }), applyOptions() {} }) }
+        LightweightCharts: { CrosshairMode: { Normal: 0 }, createChart: () => ({ addCandlestickSeries: () => chartSeries, addLineSeries: () => { throw new Error('Moving average series should not be created'); }, applyOptions() {} }) }
     });
     vm.runInContext(source, context);
     return { context, els, document, chartSeries, intervals };
 }
 const position = { status: 'active', last_updated: '2026-10-09T12:00:00', data: { symbol: 'BTC/USDT', side: 'LONG', size: 0.002, entry_price: 60000, mark_price: 61000, unrealized_pnl: 2, roi: 1.67, timestamp: null } };
-const chart = (price = 100) => ({ candles: [{ time: 100, open: price, close: price, high: price + 1, low: price - 1 }], ma1: { period: 7, data: [] }, ma2: { period: 25, data: [] }, ma3: { period: 99, data: [] } });
+const chart = (price = 100) => ({ candles: [{ time: 100, open: price, close: price, high: price + 1, low: price - 1 }] });
 
 test('real fetch uses same-origin credentials and rejects login/error responses', async () => {
     const { context } = setup();
@@ -87,6 +87,8 @@ test('trade PnL accepts nested strings; server text is rendered as text, missing
 
 test('stale chart requests cannot overwrite newer selection; empty chart shows failure', async () => {
     const { context, els } = setup();
+    assert.ok(!html.includes('signal-panel'));
+    assert.ok(!html.includes('ma1-input'));
     let resolveOld;
     context.fetch = () => new Promise(resolve => { resolveOld = resolve; });
     const old = context.fetchData();
@@ -110,7 +112,7 @@ test('refresh is every 30 seconds, stops while hidden and does not overlap', asy
     context.fetch = async path => {
         calls++;
         if (path.startsWith('/api/data')) return new Promise(resolve => { release = () => resolve(Response.json(chart())); });
-        return Response.json(path === '/api/position' ? position : { status: 'no_data' });
+        return Response.json(path === '/api/position' ? position : path === '/api/trades' ? { status: 'success', data: [] } : { status: 'no_data' });
     };
     await context.refreshDashboard();
     assert.equal(calls, 0);
@@ -120,5 +122,62 @@ test('refresh is every 30 seconds, stops while hidden and does not overlap', asy
     assert.equal(calls, 1);
     release();
     await pending;
-    assert.equal(calls, 3);
+    assert.equal(calls, 4);
+});
+
+test('zero raw PnL produces entry arrows in the containing hour or minute, with fills grouped', () => {
+    const { context } = setup();
+    const hour = Date.parse('2026-10-16T10:00:00Z') / 1000;
+    const entry = { symbol: 'BTC/USDT:USDT', side: 'buy', timestamp: (hour + 37 * 60 + 12) * 1000, info: { realizedPnl: '0.00000000' } };
+    const trades = [entry, { ...entry, timestamp: entry.timestamp + 100 },
+        { ...entry, side: 'sell', timestamp: (hour + 3600) * 1000 },
+        ...[1, -1, 0.000001, null, undefined, ''].map(pnl => ({ ...entry, info: { realizedPnl: pnl } })),
+        { ...entry, symbol: 'ETH/USDT' }, { ...entry, timestamp: null },
+        { ...entry, timestamp: (hour - 1) * 1000 }, { ...entry, timestamp: (hour + 7200) * 1000 }];
+    const hourly = context.entryMarkers(trades, [{ time: hour }, { time: hour + 3600 }], 'BTCUSDT', '1h');
+    assert.equal(hourly.length, 2);
+    assert.equal(hourly[0].time, hour);
+    assert.equal(hourly[0].shape, 'arrowUp');
+    assert.equal(hourly[0].position, 'belowBar');
+    assert.equal(hourly[1].time, hour + 3600);
+    assert.equal(hourly[1].shape, 'arrowDown');
+    assert.equal(hourly[1].position, 'aboveBar');
+    const minute = hour + 37 * 60;
+    const minuteMarkers = context.entryMarkers(trades, [{ time: minute }], 'BTCUSDT', '1m');
+    assert.equal(minuteMarkers.length, 1);
+    assert.equal(minuteMarkers[0].time, minute);
+    assert.equal(context.entryMarkers([entry], [{ time: minute - 60 }, { time: minute + 60 }], 'BTCUSDT', '1m').length, 0);
+});
+
+test('arrows survive position refresh, clear on history failure, and follow chart interval and symbol changes', async () => {
+    const { context, chartSeries } = setup();
+    const hour = Date.parse('2026-10-16T10:00:00Z') / 1000;
+    const candle = time => ({ time, open: 100, high: 101, low: 99, close: 100 });
+    let failHistory = false;
+    context.fetch = async path => {
+        if (path.startsWith('/api/data')) return Response.json({ candles: [candle(path.includes('interval=1m') ? hour + 2220 : hour)] });
+        if (path === '/api/trades') {
+            if (failHistory) throw new Error('offline');
+            return Response.json({ status: 'success', data: [{ symbol: 'BTC/USDT', side: 'buy', timestamp: (hour + 2232) * 1000, realizedPnl: 0 }] });
+        }
+        return Response.json(position);
+    };
+    await context.fetchData();
+    await context.fetchTradeHistory();
+    assert.equal(chartSeries.markers[0].time, hour);
+    await context.fetchPosition();
+    context.updatePositionDashboard({ status: 'no_position' });
+    assert.equal(chartSeries.markers.length, 1);
+    vm.runInContext("currentInterval = '1m'", context);
+    await context.fetchData();
+    assert.equal(chartSeries.markers[0].time, hour + 2220);
+    vm.runInContext("currentSymbol = 'ETHUSDT'", context);
+    await context.fetchData();
+    assert.equal(chartSeries.markers.length, 0);
+    vm.runInContext("currentSymbol = 'BTCUSDT'", context);
+    await context.fetchData();
+    assert.equal(chartSeries.markers.length, 1);
+    failHistory = true;
+    await context.fetchTradeHistory();
+    assert.equal(chartSeries.markers.length, 0);
 });
