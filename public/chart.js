@@ -151,7 +151,7 @@ export async function loadOlderCandles() {
             connectionStatus.textContent = '더 이전의 캔들 데이터 없음';
         } else {
             mergeCandles(older);
-            connectionStatus.textContent = `과거 캔들 ${older.length}개 추가`;
+            connectionStatus.textContent = '';
             // A wide or fast pan may need more than one page to fill the visible range.
             setTimeout(loadHistoryIfNeeded, 0);
         }
