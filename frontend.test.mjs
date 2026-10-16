@@ -1,32 +1,107 @@
-// Run with: node --test frontend.test.mjs (no packages required).
+// Run with: node --experimental-vm-modules --test frontend.test.mjs (no packages required).
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import vm from 'node:vm';
-const source = readFileSync(new URL('./public/script.js', import.meta.url), 'utf8');
 const html = readFileSync(new URL('./public/index.html', import.meta.url), 'utf8');
 
-function setup() {
-    const element = () => ({ style: {}, textContent: '', children: [], value: '', classList: { contains: () => false },
-        addEventListener() {}, appendChild(child) { this.children.push(child); }, replaceChildren() { this.children = []; } });
+async function setup() {
+    const element = () => ({ style: {}, textContent: '', children: [], value: '', listeners: {}, classList: { contains: () => false },
+        addEventListener(type, fn) { (this.listeners[type] ??= []).push(fn); }, appendChild(child) { this.children.push(child); }, replaceChildren() { this.children = []; } });
     const els = Object.fromEntries([...html.matchAll(/id="([^"]+)"/g)].map(match => [match[1], element()]));
     for (const [id, value] of Object.entries({ 'symbol-select': 'BTCUSDT', 'interval-select': '1h' })) els[id].value = value;
-    const chartSeries = { setData(data) { this.data = data; }, setMarkers(markers) { this.markers = markers; }, applyOptions() {}, createPriceLine() { return {}; }, removePriceLine() {} };
+    const chartSeries = { lines: new Set(), setData(data) { this.data = data; }, setMarkers(markers) { this.markers = markers; }, applyOptions() {},
+        createPriceLine(options) { this.lines.add(options); return options; }, removePriceLine(line) { this.lines.delete(line); } };
     const intervals = [];
     const document = { hidden: true, getElementById(id) { assert.ok(els[id], `Missing HTML element ${id}`); return els[id]; }, querySelectorAll: () => [], createElement: element, addEventListener() {} };
     const context = vm.createContext({ document, window: { matchMedia: () => ({ matches: true, addEventListener() {} }) },
-        console: { log() {}, error() {} }, AbortSignal, setTimeout, setInterval: (fn, ms) => intervals.push([fn, ms]),
+        console: { log() {}, error() {} }, AbortSignal, URLSearchParams, setTimeout, setInterval: (fn, ms) => intervals.push([fn, ms]),
         ResizeObserver: class { observe() {} },
         LightweightCharts: { CrosshairMode: { Normal: 0 }, createChart: () => ({ addCandlestickSeries: () => chartSeries, addLineSeries: () => { throw new Error('Moving average series should not be created'); }, applyOptions() {} }) }
     });
-    vm.runInContext(source, context);
-    return { context, els, document, chartSeries, intervals };
+    const modules = new Map();
+    function getModule(url) {
+        if (!modules.has(url.href)) {
+            modules.set(url.href, new vm.SourceTextModule(readFileSync(url, 'utf8'), { context, identifier: url.href }));
+        }
+        return modules.get(url.href);
+    }
+    const entry = getModule(new URL('./public/main.js', import.meta.url));
+    await entry.link((specifier, parent) => getModule(new URL(specifier, parent.identifier)));
+    await entry.evaluate();
+    // Keep exports out of the VM global scope so missing imports cannot pass accidentally.
+    const exports = Object.assign({}, ...[...modules.values()].map(module => module.namespace));
+    Object.defineProperty(exports, 'fetch', { get: () => context.fetch, set: value => { context.fetch = value; } });
+    return { context: exports, els, document, chartSeries, intervals, globals: context };
 }
 const position = { status: 'active', last_updated: '2026-10-09T12:00:00', data: { symbol: 'BTC/USDT', side: 'LONG', size: 0.002, entry_price: 60000, mark_price: 61000, unrealized_pnl: 2, roi: 1.67, timestamp: null } };
-const chart = (price = 100) => ({ candles: [{ time: 100, open: price, close: price, high: price + 1, low: price - 1 }] });
+const chart = (price = 100) => [[100000, String(price), String(price + 1), String(price - 1), String(price)]];
+
+test('module entry loads once and keeps functions and chart state out of global scope', async () => {
+    assert.match(html, /<script type="module" src="main\.js"><\/script>/);
+    assert.ok(!html.includes('script.js'));
+    const { globals, els, intervals } = await setup();
+    for (const name of ['fetchData', 'loadApiData', 'refreshDashboard', 'candlestickSeries', 'recentTrades']) assert.equal(globals[name], undefined);
+    for (const id of ['symbol-select', 'interval-select']) assert.equal(els[id].listeners.change.length, 1);
+    assert.equal(els['refresh-history-btn'].listeners.click.length, 1);
+    assert.equal(intervals.length, 1);
+});
+
+test('position panel updates the chart line through its module API and clears mismatched symbols', async () => {
+    const { context, els, chartSeries } = await setup();
+    context.updatePositionDashboard(position);
+    assert.equal(chartSeries.lines.size, 1);
+    assert.equal([...chartSeries.lines][0].price, 60000);
+    context.updatePositionDashboard(position);
+    assert.equal(chartSeries.lines.size, 1);
+    els['symbol-select'].value = 'ETHUSDT';
+    context.fetch = async () => Response.json(chart());
+    await context.fetchData();
+    context.updatePositionDashboard(position);
+    assert.equal(chartSeries.lines.size, 0);
+    els['symbol-select'].value = 'BTCUSDT';
+    await context.fetchData();
+    context.updatePositionDashboard(position);
+    assert.equal(chartSeries.lines.size, 1);
+    context.updatePositionDashboard(null);
+    assert.equal(chartSeries.lines.size, 0);
+});
+
+test('chart fetch goes directly to Binance Futures without credentials and converts candle timestamps/prices', async () => {
+    const { context } = await setup();
+    let calls = 0;
+    context.fetch = async (url, options) => {
+        calls++;
+        const target = new URL(url);
+        assert.equal(target.origin, 'https://fapi.binance.com');
+        assert.equal(target.pathname, '/fapi/v1/klines');
+        assert.equal(target.searchParams.get('symbol'), 'BTCUSDT');
+        assert.equal(target.searchParams.get('interval'), '1m');
+        assert.equal(target.searchParams.get('limit'), '500');
+        assert.equal(options.credentials, 'omit');
+        assert.equal(options.headers, undefined);
+        assert.equal(options.redirect, 'error');
+        return Response.json(chart());
+    };
+    const data = await context.loadBinanceCandles('BTCUSDT', '1m');
+    assert.equal(data.candles[0].time, 100);
+    assert.equal(data.candles[0].open, 100);
+    assert.equal(data.candles[0].high, 101);
+    await assert.rejects(context.loadBinanceCandles('UNKNOWN', '1m'));
+    await assert.rejects(context.loadBinanceCandles('BTCUSDT', 'bad'));
+    assert.equal(calls, 1);
+    for (const status of [403, 429, 500]) {
+        context.fetch = async () => new Response('', { status });
+        await assert.rejects(context.loadBinanceCandles('BTCUSDT', '1m'), new RegExp(`HTTP ${status}`));
+    }
+    for (const invalid of [[], {}, [null], [[100000, '', '101', '99', '100']], [[100000, '100', '98', '99', '100']]]) {
+        context.fetch = async () => Response.json(invalid);
+        await assert.rejects(context.loadBinanceCandles('BTCUSDT', '1m'));
+    }
+});
 
 test('real fetch uses same-origin credentials and rejects login/error responses', async () => {
-    const { context } = setup();
+    const { context } = await setup();
     context.fetch = async (path, options) => {
         assert.equal(path, '/api/position');
         assert.equal(options.credentials, 'same-origin');
@@ -45,7 +120,7 @@ test('real fetch uses same-origin credentials and rejects login/error responses'
 });
 
 test('position failure clears active details and differs from no position or no data', async () => {
-    const { context, els } = setup();
+    const { context, els } = await setup();
     context.fetch = async () => Response.json(position);
     await context.fetchPosition();
     assert.equal(els['pos-pnl'].textContent, '+2.00');
@@ -63,7 +138,7 @@ test('position failure clears active details and differs from no position or no 
 });
 
 test('sparse predictions clear old probabilities, thresholds, latency and features', async () => {
-    const { context, els } = setup();
+    const { context, els } = await setup();
     context.updateScheduledPredictionUI({ prediction: 'LONG', confidence: 0.7, latency_ms: 200, probabilities: { long: 0.7, short: 0.3 }, thresholds: { long: 0.6, short: 0.6 }, features: { rsi_14: 50 } });
     assert.equal(els['prob-val-long'].textContent, '70.0%');
     context.updateScheduledPredictionUI({ prediction: 'HOLD', confidence: 0 });
@@ -75,8 +150,8 @@ test('sparse predictions clear old probabilities, thresholds, latency and featur
     assert.equal(els['sched-result'].textContent, '—');
 });
 
-test('trade PnL accepts nested strings; server text is rendered as text, missing values are not zero', () => {
-    const { context, els } = setup();
+test('trade PnL accepts nested strings; server text is rendered as text, missing values are not zero', async () => {
+    const { context, els } = await setup();
     context.updateTradeHistoryUI([{ side: '<img src=x>', amount: 0.00001, price: 60000, info: { realizedPnl: '-1.23' } }, { side: 'buy', realizedPnl: 0 }]);
     const rows = els['trade-history-body'].children;
     assert.equal(rows[0].children[1].textContent, '<IMG SRC=X>');
@@ -86,13 +161,13 @@ test('trade PnL accepts nested strings; server text is rendered as text, missing
 });
 
 test('stale chart requests cannot overwrite newer selection; empty chart shows failure', async () => {
-    const { context, els } = setup();
+    const { context, els } = await setup();
     assert.ok(!html.includes('signal-panel'));
     assert.ok(!html.includes('ma1-input'));
     let resolveOld;
     context.fetch = () => new Promise(resolve => { resolveOld = resolve; });
     const old = context.fetchData();
-    vm.runInContext("currentSymbol = 'ETHUSDT'", context);
+    els['symbol-select'].value = 'ETHUSDT';
     context.fetch = async () => Response.json(chart(200));
     await context.fetchData();
     resolveOld(Response.json(chart(100)));
@@ -105,13 +180,13 @@ test('stale chart requests cannot overwrite newer selection; empty chart shows f
 });
 
 test('refresh is every 30 seconds, stops while hidden and does not overlap', async () => {
-    const { context, document, intervals } = setup();
+    const { context, document, intervals } = await setup();
     assert.equal(intervals.length, 1);
     assert.equal(intervals[0][1], 30000);
     let calls = 0, release;
     context.fetch = async path => {
         calls++;
-        if (path.startsWith('/api/data')) return new Promise(resolve => { release = () => resolve(Response.json(chart())); });
+        if (path.startsWith('https://fapi.binance.com/fapi/v1/klines?')) return new Promise(resolve => { release = () => resolve(Response.json(chart())); });
         return Response.json(path === '/api/position' ? position : path === '/api/trades' ? { status: 'success', data: [] } : { status: 'no_data' });
     };
     await context.refreshDashboard();
@@ -125,8 +200,8 @@ test('refresh is every 30 seconds, stops while hidden and does not overlap', asy
     assert.equal(calls, 4);
 });
 
-test('zero raw PnL produces entry arrows in the containing hour or minute, with fills grouped', () => {
-    const { context } = setup();
+test('zero raw PnL produces entry arrows in the containing hour or minute, with fills grouped', async () => {
+    const { context } = await setup();
     const hour = Date.parse('2026-10-16T10:00:00Z') / 1000;
     const entry = { symbol: 'BTC/USDT:USDT', side: 'buy', timestamp: (hour + 37 * 60 + 12) * 1000, info: { realizedPnl: '0.00000000' } };
     const trades = [entry, { ...entry, timestamp: entry.timestamp + 100 },
@@ -150,12 +225,12 @@ test('zero raw PnL produces entry arrows in the containing hour or minute, with 
 });
 
 test('arrows survive position refresh, clear on history failure, and follow chart interval and symbol changes', async () => {
-    const { context, chartSeries } = setup();
+    const { context, chartSeries, els } = await setup();
     const hour = Date.parse('2026-10-16T10:00:00Z') / 1000;
-    const candle = time => ({ time, open: 100, high: 101, low: 99, close: 100 });
+    const candle = time => [time * 1000, '100', '101', '99', '100'];
     let failHistory = false;
     context.fetch = async path => {
-        if (path.startsWith('/api/data')) return Response.json({ candles: [candle(path.includes('interval=1m') ? hour + 2220 : hour)] });
+        if (path.startsWith('https://fapi.binance.com/fapi/v1/klines?')) return Response.json([candle(path.includes('interval=1m') ? hour + 2220 : hour)]);
         if (path === '/api/trades') {
             if (failHistory) throw new Error('offline');
             return Response.json({ status: 'success', data: [{ symbol: 'BTC/USDT', side: 'buy', timestamp: (hour + 2232) * 1000, realizedPnl: 0 }] });
@@ -168,13 +243,13 @@ test('arrows survive position refresh, clear on history failure, and follow char
     await context.fetchPosition();
     context.updatePositionDashboard({ status: 'no_position' });
     assert.equal(chartSeries.markers.length, 1);
-    vm.runInContext("currentInterval = '1m'", context);
+    els['interval-select'].value = '1m';
     await context.fetchData();
     assert.equal(chartSeries.markers[0].time, hour + 2220);
-    vm.runInContext("currentSymbol = 'ETHUSDT'", context);
+    els['symbol-select'].value = 'ETHUSDT';
     await context.fetchData();
     assert.equal(chartSeries.markers.length, 0);
-    vm.runInContext("currentSymbol = 'BTCUSDT'", context);
+    els['symbol-select'].value = 'BTCUSDT';
     await context.fetchData();
     assert.equal(chartSeries.markers.length, 1);
     failHistory = true;
